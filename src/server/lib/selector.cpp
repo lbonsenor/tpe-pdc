@@ -10,6 +10,7 @@
 
 #define ERROR_DEFAULT_MSG "Something went wrong"
 #define MAX_EVENTS 64
+#define INVALID_FD -1
 
 /** Configuración global del selector */
 static struct selector_init selector_config;
@@ -68,19 +69,19 @@ fd_selector selector_new(const size_t max_fds)
     
     for (size_t i = 0; i < max_fds; i++)
     {
-        s->fds[i].fd = -1;                      // Los inicializo como invalidos
+        s->fds[i].fd = INVALID_FD;                      // Los inicializo como invalidos
     }
 
     s->epoll_fd = epoll_create1(EPOLL_CLOEXEC); // Close-On-Exec
-    if (s->epoll_fd == -1)
+    if (s->epoll_fd == INVALID_FD)
     {
         free(s->fds);
         free(s);
         return NULL;
     }
 
-    s->event_fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC); // Por pedido de la catedra tienen que ser NO bloqueantes
-    if (s->event_fd == -1)
+    s->event_fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC); 
+    if (s->event_fd == INVALID_FD)
     {
         close(s->epoll_fd);
         free(s->fds);
@@ -111,4 +112,43 @@ fd_selector selector_new(const size_t max_fds)
     }
     
     return s;
+}
+
+void selector_destroy(fd_selector s)
+{
+    if (s == NULL)
+    {
+        return;         // ? - Quizas cambiar de void a selector_status 
+    }
+
+    if (s->fds != NULL)
+    {
+        for (size_t i = 0; i < s->max_fds; i++)
+        {
+            if (s->fds[i].fd != INVALID_FD 
+                && s->fds[i].handler.handle_close != NULL)
+            {
+                struct selector_key key = {
+                    .s = s,
+                    .fd = s->fds[i].fd,
+                    .data = s->fds[i].data,
+                };
+                s->fds[i].handler.handle_close(&key);
+            }
+            free(s->fds);
+        }
+    }
+
+    if (s->epoll_fd != INVALID_FD)
+    {
+        close(s->epoll_fd);
+    }
+
+    if (s->event_fd != INVALID_FD)
+    {
+        close(s->event_fd);
+    }
+    
+    pthread_mutex_destroy(&s->mutex);
+    free(s);
 }
