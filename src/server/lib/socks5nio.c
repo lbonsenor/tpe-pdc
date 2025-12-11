@@ -51,7 +51,7 @@ enum socks_v5state {
      */
     HELLO_WRITE,
 
-…
+// …
 
     // estados terminales
     DONE,
@@ -70,7 +70,7 @@ struct hello_st {
     uint8_t               method;
 } ;
 
-…
+// …
 
 /*
  * Si bien cada estado tiene su propio struct que le da un alcance
