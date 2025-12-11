@@ -152,3 +152,59 @@ void selector_destroy(fd_selector s)
     pthread_mutex_destroy(&s->mutex);
     free(s);
 }
+
+static u_int32_t event_to_epoll(fd_event event) { 
+    uint32_t events = 0;
+
+    // Binary math
+    if (event & OP_READ)
+    {
+        event = event | EPOLLIN;
+    }
+    
+    if (event & OP_WRITE)
+    {
+        event = event | EPOLLOUT;
+    }
+    
+    // Es buena practica monitorear errores/excepciones
+    event = event | EPOLLERR | EPOLLHUP | EPOLLRDHUP;   // Error | Hung Up | Peer Closed Write Side
+    return events;
+    
+}
+
+selector_status selector_register(fd_selector s, int fd, const fd_handler *handler, fd_event event, void *data)
+{
+    if (s == NULL || fd < 0 || fd >= (int)s->max_fds || handler == NULL)
+    {
+        return SELECTOR_IARGS;
+    }
+    
+    pthread_mutex_lock(&s->mutex);
+
+    if (s->fds[fd].fd != -1)
+    {
+        pthread_mutex_unlock(&s->mutex);
+        return SELECTOR_IARGS;
+    }
+    
+    s->fds[fd].fd = fd;
+    s->fds[fd].data = data;
+    s->fds[fd].event = event;
+    s->fds[fd].handler = *handler;
+
+    struct epoll_event ev;
+    ev.events = event_to_epoll(event);
+    ev.data.fd = fd;
+
+    if (epoll_ctl(s->epoll_fd, EPOLL_CTL_ADD, fd, &ev) == -1)
+    {
+        s->fds[fd].fd = -1;
+        pthread_mutex_unlock(&s->mutex);
+        return SELECTOR_IO;
+    }
+
+    pthread_mutex_unlock(&s->mutex);
+    return SELECTOR_SUCCESS;
+    
+}
