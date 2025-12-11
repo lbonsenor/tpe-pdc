@@ -182,7 +182,7 @@ selector_status selector_register(fd_selector s, int fd, const fd_handler *handl
     
     pthread_mutex_lock(&s->mutex);
 
-    if (s->fds[fd].fd != -1)
+    if (s->fds[fd].fd != INVALID_FD)
     {
         pthread_mutex_unlock(&s->mutex);
         return SELECTOR_IARGS;
@@ -206,5 +206,64 @@ selector_status selector_register(fd_selector s, int fd, const fd_handler *handl
 
     pthread_mutex_unlock(&s->mutex);
     return SELECTOR_SUCCESS;
+}
+
+selector_status selector_unregister(fd_selector s, int fd) { 
+    if (s == NULL || fd < 0 || fd >= (int) s->max_fds)
+    {
+        return SELECTOR_IARGS;
+    }
+
+    pthread_mutex_lock(&s->mutex);
     
+    if (s->fds[fd].fd == INVALID_FD)
+    {
+        pthread_mutex_unlock(&s->mutex);
+        return SELECTOR_IARGS;
+    }
+
+    epoll_ctl(s->epoll_fd, EPOLL_CTL_DEL, fd, NULL);
+
+    s->fds[fd].fd = INVALID_FD;
+    s->fds[fd].event = OP_NOOP;
+    
+    pthread_mutex_unlock(&s->mutex);
+    return SELECTOR_SUCCESS;
+}
+
+selector_status selector_set_event(fd_selector s, int fd, fd_event e) {
+    if (s == NULL || fd < 0 || fd >= (int) s->max_fds)
+    {
+        return SELECTOR_IARGS;
+    }
+
+    pthread_mutex_lock(&s->mutex);
+
+    if (s->fds[fd].fd == INVALID_FD)
+    {
+        pthread_mutex_unlock(&s->mutex);
+        return SELECTOR_IARGS;
+    }
+
+    s->fds[fd].event = e;
+    
+    struct epoll_event ev;
+    ev.events = event_to_epoll(e);
+    ev.data.fd = fd;
+    
+    if (epoll_ctl(s->epoll_fd, EPOLL_CTL_MOD, fd, &ev) == -1)
+    {
+        pthread_mutex_unlock(&s->mutex);
+        return SELECTOR_IO;
+    }
+
+    pthread_mutex_unlock(&s->mutex);
+    return SELECTOR_SUCCESS;
+}
+
+selector_status selector_set_event_key(struct selector_key *key, fd_event e) {
+    if (key == NULL) {
+        return SELECTOR_IARGS;
+    }
+    return selector_set_event(key->s, key->fd, e);
 }

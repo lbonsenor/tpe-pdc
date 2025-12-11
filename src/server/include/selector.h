@@ -94,5 +94,11 @@ selector_status selector_unregister(fd_selector s, int fd);
 /// @return 
 selector_status selector_set_event(fd_selector s, int fd, fd_event e);
 
+/// @brief Versión de selector_set_event pero usando selector_key
+/// @param key 
+/// @param e 
+/// @return 
+selector_status selector_set_event_key(struct selector_key *key, fd_event e);
+
 
 #endif
