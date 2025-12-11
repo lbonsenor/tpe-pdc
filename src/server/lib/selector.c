@@ -18,7 +18,7 @@ static struct selector_init selector_config;
 typedef struct item
 {
     int         fd;
-    fd_event    event;
+    fd_interest interest;
     fd_handler  handler;
     void        *data;
 } item;
@@ -153,27 +153,27 @@ void selector_destroy(fd_selector s)
     free(s);
 }
 
-static u_int32_t event_to_epoll(fd_event event) { 
+static u_int32_t interest_to_epoll(fd_interest interest) { 
     uint32_t events = 0;
 
     // Binary math
-    if (event & OP_READ)
+    if (interest & OP_READ)
     {
-        event = event | EPOLLIN;
+        events = interest | EPOLLIN;
     }
     
-    if (event & OP_WRITE)
+    if (interest & OP_WRITE)
     {
-        event = event | EPOLLOUT;
+        events = interest | EPOLLOUT;
     }
     
     // Es buena practica monitorear errores/excepciones
-    event = event | EPOLLERR | EPOLLHUP | EPOLLRDHUP;   // Error | Hung Up | Peer Closed Write Side
+    events = events | EPOLLERR | EPOLLHUP | EPOLLRDHUP;   // Error | Hung Up | Peer Closed Write Side
     return events;
     
 }
 
-selector_status selector_register(fd_selector s, int fd, const fd_handler *handler, fd_event event, void *data)
+selector_status selector_register(fd_selector s, int fd, const fd_handler *handler, fd_interest interest, void *data)
 {
     if (s == NULL || fd < 0 || fd >= (int)s->max_fds || handler == NULL)
     {
@@ -190,11 +190,11 @@ selector_status selector_register(fd_selector s, int fd, const fd_handler *handl
     
     s->fds[fd].fd = fd;
     s->fds[fd].data = data;
-    s->fds[fd].event = event;
+    s->fds[fd].interest = interest;
     s->fds[fd].handler = *handler;
 
     struct epoll_event ev;
-    ev.events = event_to_epoll(event);
+    ev.events = interest_to_epoll(interest);
     ev.data.fd = fd;
 
     if (epoll_ctl(s->epoll_fd, EPOLL_CTL_ADD, fd, &ev) == -1)
@@ -225,13 +225,13 @@ selector_status selector_unregister(fd_selector s, int fd) {
     epoll_ctl(s->epoll_fd, EPOLL_CTL_DEL, fd, NULL);
 
     s->fds[fd].fd = INVALID_FD;
-    s->fds[fd].event = OP_NOOP;
+    s->fds[fd].interest = OP_NOOP;
     
     pthread_mutex_unlock(&s->mutex);
     return SELECTOR_SUCCESS;
 }
 
-selector_status selector_set_event(fd_selector s, int fd, fd_event e) {
+selector_status selector_set_interest(fd_selector s, int fd, fd_interest i) {
     if (s == NULL || fd < 0 || fd >= (int) s->max_fds)
     {
         return SELECTOR_IARGS;
@@ -245,10 +245,10 @@ selector_status selector_set_event(fd_selector s, int fd, fd_event e) {
         return SELECTOR_IARGS;
     }
 
-    s->fds[fd].event = e;
+    s->fds[fd].interest = i;
     
     struct epoll_event ev;
-    ev.events = event_to_epoll(e);
+    ev.events = interest_to_epoll(i);
     ev.data.fd = fd;
     
     if (epoll_ctl(s->epoll_fd, EPOLL_CTL_MOD, fd, &ev) == -1)
@@ -261,9 +261,9 @@ selector_status selector_set_event(fd_selector s, int fd, fd_event e) {
     return SELECTOR_SUCCESS;
 }
 
-selector_status selector_set_event_key(struct selector_key *key, fd_event e) {
+selector_status selector_set_interest_key(struct selector_key *key, fd_interest i) {
     if (key == NULL) {
         return SELECTOR_IARGS;
     }
-    return selector_set_event(key->s, key->fd, e);
+    return selector_set_interest(key->s, key->fd, i);
 }

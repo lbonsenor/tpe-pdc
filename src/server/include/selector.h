@@ -28,7 +28,7 @@ typedef enum {
     OP_READ     = 1 << 0,
     OP_WRITE    = 1 << 1,
     OP_BLOCK    = 1 << 2,
-} fd_event;
+} fd_interest;
 
 typedef struct selector_key 
 {
@@ -79,7 +79,7 @@ void selector_destroy(fd_selector s);
 /// @param event    Eventos iniciales
 /// @param data     Puntero arbitrario que se pasará a los callbacks
 /// @return 
-selector_status selector_register(fd_selector s, int fd, const fd_handler * handler, fd_event event, void *data);
+selector_status selector_register(fd_selector s, int fd, const fd_handler * handler, fd_interest event, void *data);
 
 /// @brief Desregistra un file descriptor del selector
 /// @param s    Selector
@@ -90,15 +90,15 @@ selector_status selector_unregister(fd_selector s, int fd);
 /// @brief Modifica los eventos de un file descriptor ya registrado
 /// @param s    Selector
 /// @param fd   File Descriptor
-/// @param e    Evento
+/// @param i    Evento
 /// @return 
-selector_status selector_set_event(fd_selector s, int fd, fd_event e);
+selector_status selector_set_interest(fd_selector s, int fd, fd_interest i);
 
-/// @brief Versión de selector_set_event pero usando selector_key
+/// @brief Versión de selector_set_interest pero usando selector_key
 /// @param key 
-/// @param e 
+/// @param i 
 /// @return 
-selector_status selector_set_event_key(struct selector_key *key, fd_event e);
+selector_status selector_set_interest_key(struct selector_key *key, fd_interest i);
 
 
 #endif
