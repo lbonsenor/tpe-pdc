@@ -20,6 +20,8 @@
 #include "socks5nio.h"
 #include "netutils.h"
 
+#define BUFFER_SIZE 8192
+
 #define N(x) (sizeof(x)/sizeof((x)[0]))
 
 
@@ -51,7 +53,70 @@ enum socks_v5state {
      */
     HELLO_WRITE,
 
-// …
+    /**
+     * recibe el mensaje `request` del cliente y lo procesa
+     * 
+     * Intereses:
+     *      - OP_READ sobre client_fd
+     *
+     * Transiciones:
+     *      - REQUEST_READ      mientras el mensaje no esté completo
+     *      - REQUEST_RESOLVE   si necesita resolver el hostname
+     *      - REQUEST_CONNECT   si puede conectar directamente
+     *      - ERROR             ante cualquier error
+     */
+    REQUEST_READ,
+
+    /**
+     * resuelve el FQDN del request de forma asincronica
+     * 
+     * Intereses:
+     *      - OP_NOOP
+     * 
+     * Transiciones:
+     *      - REQUEST_CONNECTING    cuando la resolución está lista
+     *      - ERROR                  si falla la resolución
+     */
+    REQUEST_RESOLVE,
+    
+    /**
+     * intenta conectar al origin server
+     * 
+     * Intereses:
+     *      - OP_WRITE sobre origin_fd
+     * 
+     * Transiciiones:
+     *      - REQUEST_CONNECTING    mientras no se complete
+     *      - REQUEST_WRITE         cuando se conecta exitosamente
+     *      - ERROR                 si falla la conexión
+     */
+    REQUEST_CONNECTING,
+    
+    /**
+     * envía la rta del request al cliente
+     * 
+     * Intereses:
+     *      - OP_WRITE sobre client_fd
+     * 
+     * Transiciones:
+     *      - REQUEST_WRITE mientras queden bytes
+     *      - COPY          cuando se envió todo
+     *      - ERRO          ante cualquier error
+     */
+    REQUEST_WRITE,
+
+    /**
+     * copia datos entre client y origin
+     * 
+     * Intereses:
+     *      - OP_READ   si hay espacio en el write_buffer 
+     *      - OP_WRITE  si hay datos en el read_buffer
+     * 
+     * Transiciones:
+     *      - COPY  cuando hay datos para copiar
+     *      - DONE  cuando ambas direcciones cerraron
+     */
+    COPY,
 
     // estados terminales
     DONE,
@@ -70,7 +135,32 @@ struct hello_st {
     uint8_t               method;
 } ;
 
-// …
+struct request_st {
+    buffer                 *rb, *wb;
+    struct request_parser   parser;     //TODO
+    enum socks_reply        reply;      //TODO
+    
+    struct addrinfo        *current_addr;  
+};
+
+struct connecting {
+    int             *fd;
+    struct addrinfo *current_addr;
+};
+
+struct copy {
+    int     *fd;
+    buffer  *rb, *wb;
+
+    int     duplex;
+
+    struct copy *other;
+};
+
+enum copy_duplex {
+    DUPLEX_READ = 1 << 0,
+    DUPLEX_WRITE = 1 << 1,
+};
 
 /*
  * Si bien cada estado tiene su propio struct que le da un alcance
@@ -81,7 +171,7 @@ struct hello_st {
  * liberarlo finalmente, y un pool para reusar alocaciones previas.
  */
 struct socks5 {
-…
+// …
     /** maquinas de estados */
     struct state_machine          stm;
 
@@ -96,8 +186,26 @@ struct socks5 {
         struct connecting         conn;
         struct copy               copy;
     } orig;
-…
+
+    int                     client_fd;
+    struct sockaddr_storage client_addr;
+    socklen_t               client_addr_len;
+
+    int                     origin_fd;
+    struct addrinfo         *origin_resolution;
+
+    uint8_t                 raw_buff_a[BUFFER_SIZE];
+    uint8_t                 raw_buff_b[BUFFER_SIZE];
+    buffer                  read_buffer;
+    buffer                  write_buffer;
+
+    struct socks5           *next;
+    uint32_t                references;
 };
+
+static const uint32_t       max_pool    = 50;  // ? - Esta en minusculas, asumo que es un static const, pero no debería ser un #define?
+static uint32_t             pool_size   = 0;
+static struct socks5        *pool       = NULL;
 
 
 /** realmente destruye */
@@ -109,6 +217,8 @@ socks5_destroy_(struct socks5* s) {
     }
     free(s);
 }
+
+// TODO - static struct socks5* socks5_new(int client_fd)
 
 /**
  * destruye un  `struct socks5', tiene en cuenta las referencias
@@ -278,7 +388,7 @@ static const struct state_definition client_statbl[] = {
         .on_departure     = hello_read_close,
         .on_read_ready    = hello_read,
     },
-…
+// …
 
 ///////////////////////////////////////////////////////////////////////////////
 // Handlers top level de la conexión pasiva.
