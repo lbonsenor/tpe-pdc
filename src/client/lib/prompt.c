@@ -36,6 +36,7 @@ static const char* color_codes[] = {
 // ASCII
 #define DEL 127
 #define BACKSPACE 8
+#define CTRL_C 3
 
 #define REQUIRED_FIELD "This field is required"
 
@@ -67,11 +68,11 @@ static void clear_line(void) {
 }
 
 static void move_cursor_up(int n) {
-    if (n > 0) printf("\033[%dA");
+    if (n > 0) printf("\033[%dA", n);
 }
 
 static void move_cursor_down(int n) {
-    if (n > 0) printf("\033[%dB");
+    if (n > 0) printf("\033[%dB", n);
 }
 
 static void hide_cursor(void) {
@@ -137,21 +138,29 @@ char* prompt_input(const struct input_config *config) {
     size_t input_len = 0;
     size_t cursor_pos = 0;
     bool done = false;
+    bool first_render = true;
     char error_msg[256] = {0};
 
     while (!done)
     {
-        clear_line();
-        move_cursor_up(2);
-        clear_line();
-        move_cursor_up(1);
-        clear_line;
+        /* Clear previous output - move up one line at a time */
+        if (!first_render) {
+            clear_line();          // clear current line (empty line or error line)
+            move_cursor_up(1);     // move up to input line
+            clear_line();          // clear input line
+            move_cursor_up(1);     // move up to title line
+            clear_line();          // clear title line
+            // cursor is now at title line position, ready to print
+        }
+        first_render = false;
 
+        /* Print title */
         set_color(COLOR_CYAN);
         printf("%s  %s\n", BOX_EMPTY, config->title);
         set_color(COLOR_RESET);
         printf("%s  ", BOX_VERTICAL);
 
+        /* Print input or placeholder */
         if (input_len == 0 && config->placeholder)
         {
             set_color(COLOR_GRAY);
@@ -167,7 +176,7 @@ char* prompt_input(const struct input_config *config) {
                     printf("%c", input[i]);
                     set_color(COLOR_RESET);
                 } else {
-                    print("%c", input[i]);
+                    printf("%c", input[i]);
                 }
             }
             if (cursor_pos == input_len) 
@@ -179,6 +188,7 @@ char* prompt_input(const struct input_config *config) {
         }
         printf("\n");
 
+        /* Print error if any */
         if (error_msg[0])
         {
             set_color(COLOR_RED);
@@ -187,13 +197,18 @@ char* prompt_input(const struct input_config *config) {
         }
         
         fflush(stdout);
-        show_cursor();
 
         int key = read_key();
-        hide_cursor();
         
         switch (key)
         {
+            case CTRL_C:
+                free(input);
+                prompt_cleanup();
+                printf("\n");
+                exit(0);
+                break;
+
             case '\n':
             case '\r':
                 error_msg[0] = '\0';
@@ -246,7 +261,8 @@ char* prompt_input(const struct input_config *config) {
                 break;
                 
             default:
-                if (key >= 32 && key < 127) // Caracteres printeables
+                /* Printable characters */
+                if (key >= 32 && key < 127)
                 {
                     if (input_len < buffer_size - 1)
                     {
@@ -262,11 +278,12 @@ char* prompt_input(const struct input_config *config) {
         }
     }
     
-    clear_line();
-    move_cursor_up(2);
-    clear_line();
-    move_cursor_up(1);
-    clear_line();
+    /* Clear and show final result - move up one line at a time */
+    clear_line();          // clear current line
+    move_cursor_up(1);     // move up to input line
+    clear_line();          // clear input line
+    move_cursor_up(1);     // move up to title line
+    clear_line();          // clear title line
     
     set_color(COLOR_CYAN);
     printf("%s  %s\n", BOX_FILLED, config->title);
@@ -288,19 +305,29 @@ int prompt_select(const struct select_config *config) {
 
     int selected = config->default_index >= 0 ? config->default_index : 0;
     bool done = false;
+    bool first_render = true;
 
     while (!done)
     {
-        for (size_t i = 0; i < config->option_count + 2; i++)
-        {
-            clear_line();
-            if (i < config->option_count + 1) move_cursor_up(1);
+        /* Clear previous output - we have: title + N options + empty line = N+2 lines */
+        if (!first_render) {
+            // Start at empty line, need to clear N+2 lines and move up N+1 times
+            clear_line();                           // clear empty line where cursor is
+            for (size_t i = 0; i < config->option_count + 1; i++)
+            {
+                move_cursor_up(1);                  // move up one line
+                clear_line();                       // clear that line
+            }
+            // cursor is now at title line position
         }
+        first_render = false;
 
+        /* Print title */
         set_color(COLOR_CYAN);
         printf("%s  %s\n", BOX_EMPTY, config->title);
         set_color(COLOR_RESET);
 
+        /* Print all options */
         for (size_t i = 0; i < config->option_count; i++)
         {
             printf("%s  ", BOX_VERTICAL);
@@ -314,49 +341,60 @@ int prompt_select(const struct select_config *config) {
             {
                 printf("%s %s\n", RADIO_EMPTY, config->options[i]);
             }
-
-            fflush(stdout);
-
-            int key = read_key();
-
-            switch (key)
-            {
-                case '\n':
-                case '\r':
-                    done = true;
-                    break;
-                
-                case UP:
-                    selected = (selected - 1 + config->option_count) % config->option_count; // asi vuelve para abajo
-                    break;
-                
-                case DOWN:
-                    selected = (selected + 1) % config->option_count;
-                
-                default:
-                    break;
-            }
         }
-        
-        for (size_t i = 0; i < config->option_count + 2; i++)
+
+        fflush(stdout);
+
+        /* Read key AFTER printing all options */
+        int key = read_key();
+
+        switch (key)
         {
-            clear_line();
-            if (i < config->option_count + 1) move_cursor_up(1);
-        }
-        
-        set_color(COLOR_CYAN);
-        printf("%s  %s\n", BOX_FILLED, config->title);
-        set_color(COLOR_RESET);
-        printf("%s  ", BOX_VERTICAL);
-        set_color(COLOR_GREEN);
-        printf("%s\n", config->options[selected]);
-        set_color(COLOR_RESET);
+            case CTRL_C:
+                prompt_cleanup();
+                printf("\n");
+                exit(0);
+                break;
 
-        show_cursor();
-        disable_raw_mode();
-        return selected;
+            case '\n':
+            case '\r':
+                done = true;
+                break;
+            
+            case UP:
+                selected = (selected - 1 + config->option_count) % config->option_count;
+                break;
+            
+            case DOWN:
+                selected = (selected + 1) % config->option_count;
+                break;
+
+            default:
+                break;
+        }
     }
     
+    /* Clear and show final result */
+    clear_line();                           // clear empty line where cursor is
+    for (size_t i = 0; i < config->option_count + 1; i++)
+    {
+        move_cursor_up(1);                  // move up one line
+        clear_line();                       // clear that line
+    }
+    // cursor is now at title line position
+    
+    set_color(COLOR_CYAN);
+    printf("%s  %s\n", BOX_FILLED, config->title);
+    set_color(COLOR_RESET);
+    printf("%s  ", BOX_VERTICAL);
+    set_color(COLOR_GREEN);
+    printf("%s\n", config->options[selected]);
+    set_color(COLOR_RESET);
+
+    show_cursor();
+    disable_raw_mode();
+    
+    return selected;
 }
 
 bool prompt_confirm(const struct confirm_config *config) {
@@ -365,12 +403,20 @@ bool prompt_confirm(const struct confirm_config *config) {
     
     bool choice = config->is_yes_default;
     bool done = false;
+    bool first_render = true;
     
     while (!done) 
     {
-        clear_line();
-        move_cursor_up(1);
-        clear_line();
+        /* Clear previous output - we have: title + yes/no + empty line = 3 lines */
+        if (!first_render) {
+            clear_line();          // clear empty line where cursor is
+            move_cursor_up(1);     // move up to yes/no line
+            clear_line();          // clear yes/no line
+            move_cursor_up(1);     // move up to title line
+            clear_line();          // clear title line
+            // cursor is now at title line position
+        }
+        first_render = false;
         
         set_color(COLOR_CYAN);
         printf("%s  %s\n", BOX_EMPTY, config->title);
@@ -398,6 +444,12 @@ bool prompt_confirm(const struct confirm_config *config) {
         
         switch (key) 
         {
+            case CTRL_C:
+                prompt_cleanup();
+                printf("\n");
+                exit(0);
+                break;
+
             case '\n':
             case '\r':
                 done = true;
@@ -424,9 +476,13 @@ bool prompt_confirm(const struct confirm_config *config) {
         }
     }
     
-    clear_line();
-    move_cursor_up(1);
-    clear_line();
+    /* Clear and show final result */
+    clear_line();          // clear empty line where cursor is
+    move_cursor_up(1);     // move up to yes/no line
+    clear_line();          // clear yes/no line
+    move_cursor_up(1);     // move up to title line
+    clear_line();          // clear title line
+    // cursor is now at title line position
     
     set_color(COLOR_CYAN);
     printf("%s  %s\n", BOX_FILLED, config->title);

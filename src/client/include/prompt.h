@@ -22,30 +22,30 @@ typedef struct input_config {
     validator_func validator;
     size_t max_length;
     bool required;
-};
+} input_config;
 
 typedef struct select_config {
     const char *title;
     const char **options;
     size_t option_count;
     int default_index;
-};
+} select_config;
 
 typedef struct confirm_config {
     const char *title;
     bool is_yes_default;
-};
+} confirm_config;
 
 void prompt_init(void);
 
 void prompt_cleanup(void);
 
-char* prompt_input(const input_config *config);
+char* prompt_input(const struct input_config *config);
 
-char* prompt_passwd(const input_config *config);
+char* prompt_password(const struct input_config *config);
 
-int prompt_select(const select_config *config);
+int prompt_select(const struct select_config *config);
 
-bool prompt_confirm(const confirm_config *config);
+bool prompt_confirm(const struct confirm_config *config);
 
 #endif
