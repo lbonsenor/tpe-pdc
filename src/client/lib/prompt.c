@@ -145,22 +145,19 @@ char* prompt_input(const struct input_config *config) {
     {
         /* Clear previous output - move up one line at a time */
         if (!first_render) {
-            clear_line();          // clear current line (empty line or error line)
-            move_cursor_up(1);     // move up to input line
-            clear_line();          // clear input line
-            move_cursor_up(1);     // move up to title line
-            clear_line();          // clear title line
-            // cursor is now at title line position, ready to print
+            clear_line();          
+            move_cursor_up(1);    
+            clear_line();          
+            move_cursor_up(1);    
+            clear_line();         
         }
         first_render = false;
 
-        /* Print title */
         set_color(COLOR_CYAN);
         printf("%s  %s\n", BOX_EMPTY, config->title);
         set_color(COLOR_RESET);
         printf("%s  ", BOX_VERTICAL);
 
-        /* Print input or placeholder */
         if (input_len == 0 && config->placeholder)
         {
             set_color(COLOR_GRAY);
@@ -188,7 +185,6 @@ char* prompt_input(const struct input_config *config) {
         }
         printf("\n");
 
-        /* Print error if any */
         if (error_msg[0])
         {
             set_color(COLOR_RED);
@@ -261,7 +257,6 @@ char* prompt_input(const struct input_config *config) {
                 break;
                 
             default:
-                /* Printable characters */
                 if (key >= 32 && key < 127)
                 {
                     if (input_len < buffer_size - 1)
@@ -278,12 +273,11 @@ char* prompt_input(const struct input_config *config) {
         }
     }
     
-    /* Clear and show final result - move up one line at a time */
-    clear_line();          // clear current line
-    move_cursor_up(1);     // move up to input line
-    clear_line();          // clear input line
-    move_cursor_up(1);     // move up to title line
-    clear_line();          // clear title line
+    clear_line();          
+    move_cursor_up(1);     
+    clear_line();          
+    move_cursor_up(1);     
+    clear_line();          
     
     set_color(COLOR_CYAN);
     printf("%s  %s\n", BOX_FILLED, config->title);
@@ -309,25 +303,20 @@ int prompt_select(const struct select_config *config) {
 
     while (!done)
     {
-        /* Clear previous output - we have: title + N options + empty line = N+2 lines */
         if (!first_render) {
-            // Start at empty line, need to clear N+2 lines and move up N+1 times
-            clear_line();                           // clear empty line where cursor is
+            clear_line();                           
             for (size_t i = 0; i < config->option_count + 1; i++)
             {
-                move_cursor_up(1);                  // move up one line
-                clear_line();                       // clear that line
+                move_cursor_up(1);                  
+                clear_line();                       
             }
-            // cursor is now at title line position
         }
         first_render = false;
 
-        /* Print title */
         set_color(COLOR_CYAN);
         printf("%s  %s\n", BOX_EMPTY, config->title);
         set_color(COLOR_RESET);
 
-        /* Print all options */
         for (size_t i = 0; i < config->option_count; i++)
         {
             printf("%s  ", BOX_VERTICAL);
@@ -345,7 +334,6 @@ int prompt_select(const struct select_config *config) {
 
         fflush(stdout);
 
-        /* Read key AFTER printing all options */
         int key = read_key();
 
         switch (key)
@@ -374,14 +362,12 @@ int prompt_select(const struct select_config *config) {
         }
     }
     
-    /* Clear and show final result */
-    clear_line();                           // clear empty line where cursor is
+    clear_line();                           
     for (size_t i = 0; i < config->option_count + 1; i++)
     {
-        move_cursor_up(1);                  // move up one line
-        clear_line();                       // clear that line
+        move_cursor_up(1);                 
+        clear_line();                       
     }
-    // cursor is now at title line position
     
     set_color(COLOR_CYAN);
     printf("%s  %s\n", BOX_FILLED, config->title);
@@ -407,14 +393,12 @@ bool prompt_confirm(const struct confirm_config *config) {
     
     while (!done) 
     {
-        /* Clear previous output - we have: title + yes/no + empty line = 3 lines */
         if (!first_render) {
-            clear_line();          // clear empty line where cursor is
-            move_cursor_up(1);     // move up to yes/no line
-            clear_line();          // clear yes/no line
-            move_cursor_up(1);     // move up to title line
-            clear_line();          // clear title line
-            // cursor is now at title line position
+            clear_line();          
+            move_cursor_up(1);     
+            clear_line();         
+            move_cursor_up(1);     
+            clear_line();          
         }
         first_render = false;
         
@@ -476,13 +460,11 @@ bool prompt_confirm(const struct confirm_config *config) {
         }
     }
     
-    /* Clear and show final result */
-    clear_line();          // clear empty line where cursor is
-    move_cursor_up(1);     // move up to yes/no line
-    clear_line();          // clear yes/no line
-    move_cursor_up(1);     // move up to title line
-    clear_line();          // clear title line
-    // cursor is now at title line position
+    clear_line();          
+    move_cursor_up(1);     
+    clear_line();          
+    move_cursor_up(1);     
+    clear_line();         
     
     set_color(COLOR_CYAN);
     printf("%s  %s\n", BOX_FILLED, config->title);
