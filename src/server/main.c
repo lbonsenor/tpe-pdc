@@ -146,7 +146,7 @@ finally:
         fprintf(stderr, "%s: %s\n", (err_msg == NULL) ? "": err_msg,
                                   ss == SELECTOR_IO
                                       ? strerror(errno)
-                                      : selector_error(ss));
+                                      : selector_error(selector));  // CORRECT - pass selector
         ret = 2;
     } else if(err_msg) {
         perror(err_msg);

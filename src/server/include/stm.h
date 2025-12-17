@@ -1,5 +1,5 @@
-#ifndef STM_H_wL7YxN65ZHqKGvCPrNbPtMJgL8B
-#define STM_H_wL7YxN65ZHqKGvCPrNbPtMJgL8B
+#ifndef STM_H
+#define STM_H
 
 /**
  * stm.c - pequeño motor de maquina de estados donde los eventos son los
@@ -21,6 +21,8 @@
  * de selector.c.
  */
 
+struct selector_key;
+
 struct state_machine {
     /** declaración de cual es el estado inicial */
     unsigned                      initial;
@@ -33,8 +35,6 @@ struct state_machine {
     /** estado actual */
     const struct state_definition *current;
 };
-
-struct selector_key *key;
 
 /**
  * definición de un estado de la máquina de estados

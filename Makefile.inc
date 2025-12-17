@@ -18,15 +18,15 @@ SERVER_INCLUDE = $(SERVER_DIR)/include
 SERVER_LIB = $(SERVER_DIR)/lib
 SERVER_MAIN = $(SERVER_DIR)/main.c
 
-# Client source files
-CLIENT_SOURCES = $(wildcard $(CLIENT_LIB)/*.c)
-CLIENT_OBJECTS = $(patsubst $(CLIENT_LIB)/%.c,$(BUILD_DIR)/client/%.o,$(CLIENT_SOURCES))
-CLIENT_MAIN_OBJ = $(BUILD_DIR)/client/main.o
-
-# Server source files
-SERVER_SOURCES = $(wildcard $(SERVER_LIB)/*.c)
+# Server source files - EXCLUDE test files
+SERVER_SOURCES = $(filter-out %_test.c, $(wildcard $(SERVER_LIB)/*.c))
 SERVER_OBJECTS = $(patsubst $(SERVER_LIB)/%.c,$(BUILD_DIR)/server/%.o,$(SERVER_SOURCES))
 SERVER_MAIN_OBJ = $(BUILD_DIR)/server/main.o
+
+# Client source files - EXCLUDE test files  
+CLIENT_SOURCES = $(filter-out %_test.c, $(wildcard $(CLIENT_LIB)/*.c))
+CLIENT_OBJECTS = $(patsubst $(CLIENT_LIB)/%.c,$(BUILD_DIR)/client/%.o,$(CLIENT_SOURCES))
+CLIENT_MAIN_OBJ = $(BUILD_DIR)/client/main.o
 
 # Output executables
 CLIENT_BIN = $(BIN_DIR)/client

@@ -1,7 +1,11 @@
 #ifndef HELLO_H
 #define HELLO_H
 
+#include <stdint.h>
 #include <stdbool.h>
+
+// Forward declaration or include
+typedef struct buffer buffer;  // Add this if buffer.h isn't included
 
 /**
  * hello.h - Parser para mensaje HELLO de SOCKS5

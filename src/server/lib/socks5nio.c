@@ -1,21 +1,26 @@
 /**
  * socks5nio.c  - controla el flujo de un proxy SOCKSv5 (sockets no bloqueantes)
  */
-#include<stdio.h>
-#include <stdlib.h>  // malloc
-#include <string.h>  // memset
-#include <assert.h>  // assert
+//defines for freeaddrinfo (test feat)
+#define _POSIX_C_SOURCE 200112L
+#define _DEFAULT_SOURCE
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <assert.h>
 #include <errno.h>
 #include <time.h>
-#include <unistd.h>  // close
+#include <unistd.h>
 #include <pthread.h>
-
+#include <fcntl.h>
+#include <netdb.h>
+#include <sys/types.h>
+#include <sys/socket.h>
 #include <arpa/inet.h>
 
+#include "buffer.h"
 #include "hello.h"
 #include "request.h"
-#include "buffer.h"
-
 #include "stm.h"
 #include "socks5nio.h"
 #include "netutils.h"
@@ -137,8 +142,8 @@ struct hello_st {
 
 struct request_st {
     buffer                 *rb, *wb;
-    struct request_parser   parser;     //TODO
-    enum socks_reply        reply;      //TODO
+    // struct request_parser   parser;     // TODO - Commented until request.h is complete
+    // enum socks_reply        reply;      // TODO - Commented until request.h is complete
     
     struct addrinfo        *current_addr;  
 };
@@ -218,7 +223,60 @@ socks5_destroy_(struct socks5* s) {
     free(s);
 }
 
-// TODO - static struct socks5* socks5_new(int client_fd)
+static void hello_read_init(const unsigned state, struct selector_key *key);
+static unsigned hello_read(struct selector_key *key);
+static unsigned hello_write(struct selector_key *key);  // Add this line
+
+/** definición de handlers para cada estado */
+static const struct state_definition client_statbl[] = {
+    {
+        .state            = HELLO_READ,
+        .on_arrival       = hello_read_init,
+        .on_read_ready    = hello_read,
+    },
+    {
+        .state            = HELLO_WRITE,
+        .on_write_ready   = hello_write,
+    },
+    {
+        .state            = ERROR,
+    },
+};
+
+static struct socks5 *
+socks5_new(int client_fd) {
+    struct socks5 *ret;
+
+    if (pool == NULL) {
+        ret = malloc(sizeof(*ret));
+    } else {
+        ret       = pool;
+        pool      = pool->next;
+        ret->next = NULL;
+        pool_size--;
+    }
+
+    if (ret == NULL) {
+        return NULL;
+    }
+
+    memset(ret, 0, sizeof(*ret));
+
+    ret->client_fd          = client_fd;
+    ret->origin_fd          = -1;
+    ret->origin_resolution  = NULL;
+    ret->references         = 1;
+
+    buffer_init(&ret->read_buffer,  N(ret->raw_buff_a), ret->raw_buff_a);
+    buffer_init(&ret->write_buffer, N(ret->raw_buff_b), ret->raw_buff_b);
+
+    ret->stm.initial   = HELLO_READ;
+    ret->stm.max_state = ERROR;
+    ret->stm.states    = client_statbl;
+    stm_init(&ret->stm);
+
+    return ret;
+}
 
 /**
  * destruye un  `struct socks5', tiene en cuenta las referencias
@@ -279,9 +337,6 @@ socksv5_passive_accept(struct selector_key *key) {
     const int client = accept(key->fd, (struct sockaddr*) &client_addr,
                                                           &client_addr_len);
     if(client == -1) {
-        goto fail;
-    }
-    if(selector_fd_set_nio(client) == -1) {
         goto fail;
     }
     state = socks5_new(client);
@@ -380,15 +435,31 @@ hello_process(const struct hello_st* d) {
     return ret;
 }
 
-/** definición de handlers para cada estado */
-static const struct state_definition client_statbl[] = {
-    {
-        .state            = HELLO_READ,
-        .on_arrival       = hello_read_init,
-        .on_departure     = hello_read_close,
-        .on_read_ready    = hello_read,
-    },
-// …
+static unsigned
+hello_write(struct selector_key *key) {
+    struct hello_st *d = &ATTACHMENT(key)->client.hello;
+    unsigned ret = HELLO_WRITE;
+    
+    buffer *b = d->wb;
+    size_t nbytes;
+    uint8_t *ptr = buffer_read_ptr(b, &nbytes);
+    ssize_t n = send(key->fd, ptr, nbytes, MSG_NOSIGNAL);
+    
+    if (n == -1) {
+        ret = ERROR;
+    } else {
+        buffer_read_adv(b, n);
+        if (!buffer_can_read(b)) {
+            if (selector_set_interest_key(key, OP_READ) == SELECTOR_SUCCESS) {
+                ret = HELLO_READ;  // Or next state
+            } else {
+                ret = ERROR;
+            }
+        }
+    }
+    
+    return ret;
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 // Handlers top level de la conexión pasiva.
@@ -439,7 +510,7 @@ socksv5_done(struct selector_key* key) {
     };
     for(unsigned i = 0; i < N(fds); i++) {
         if(fds[i] != -1) {
-            if(SELECTOR_SUCCESS != selector_unregister_fd(key->s, fds[i])) {
+            if(SELECTOR_SUCCESS != selector_unregister(key->s, fds[i])) {  // Changed from selector_unregister_fd
                 abort();
             }
             close(fds[i]);

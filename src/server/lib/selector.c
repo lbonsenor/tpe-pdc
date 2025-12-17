@@ -4,6 +4,8 @@
 #include <sys/epoll.h>
 #include <unistd.h>
 #include <sys/eventfd.h>
+#include <fcntl.h>
+#include <errno.h>  // Add this at the top with other includes
 
 #include "../include/selector.h"
 #include "selector.h"
@@ -114,43 +116,33 @@ fd_selector selector_new(const size_t max_fds)
     return s;
 }
 
-void selector_destroy(fd_selector s)
-{
-    if (s == NULL)
-    {
-        return;         // ? - Quizas cambiar de void a selector_status 
+void selector_destroy(fd_selector s) {
+    if (s == NULL) {
+        return;
     }
-
-    if (s->fds != NULL)
-    {
-        for (size_t i = 0; i < s->max_fds; i++)
-        {
-            if (s->fds[i].fd != INVALID_FD 
-                && s->fds[i].handler.handle_close != NULL)
-            {
-                struct selector_key key = {
-                    .s = s,
-                    .fd = s->fds[i].fd,
-                    .data = s->fds[i].data,
-                };
-                s->fds[i].handler.handle_close(&key);
-            }
-            free(s->fds);
-        }
-    }
-
-    if (s->epoll_fd != INVALID_FD)
-    {
+    
+    // Close epoll_fd BEFORE freeing s->fds
+    if (s->epoll_fd != -1) {
         close(s->epoll_fd);
     }
-
-    if (s->event_fd != INVALID_FD)
-    {
+    
+    if (s->event_fd != -1) {
         close(s->event_fd);
     }
     
-    pthread_mutex_destroy(&s->mutex);
-    free(s);
+    // Unregister all file descriptors
+    if (s->fds != NULL) {
+        for (size_t i = 0; i < s->max_fds; i++) {
+            if (s->fds[i].fd != INVALID_FD) {
+                // Don't close the fd here, just clean up
+                s->fds[i].fd = INVALID_FD;
+            }
+        }
+        free(s->fds);  // Free fds array
+        s->fds = NULL; // Prevent double-free
+    }
+    
+    free(s);  // Free the selector itself LAST
 }
 
 static u_int32_t interest_to_epoll(fd_interest interest) { 
@@ -266,4 +258,71 @@ selector_status selector_set_interest_key(struct selector_key *key, fd_interest 
         return SELECTOR_IARGS;
     }
     return selector_set_interest(key->s, key->fd, i);
+}
+
+int selector_fd_set_nio(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags == -1) {
+        return -1;
+    }
+    return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+
+selector_status selector_select(fd_selector s) {
+    if (s == NULL) {
+        return SELECTOR_IARGS;
+    }
+
+    struct epoll_event events[MAX_EVENTS];
+    int timeout = selector_config.select_timeout.tv_sec * 1000 + 
+                  selector_config.select_timeout.tv_nsec / 1000000;  // Convert nanoseconds to milliseconds
+    
+    int n = epoll_wait(s->epoll_fd, events, MAX_EVENTS, timeout);
+    
+    if (n < 0) {
+        if (errno == EINTR) {
+            return SELECTOR_SUCCESS;  // Interrupted, not an error
+        }
+        return SELECTOR_IO;
+    }
+    
+    for (int i = 0; i < n; i++) {
+        struct epoll_event *e = &events[i];
+        item *it = (item *)e->data.ptr;
+        
+        if (it == NULL || it->fd == INVALID_FD) {
+            continue;
+        }
+        
+        struct selector_key key = {
+            .s    = s,
+            .fd   = it->fd,
+            .data = it->data,
+        };
+        
+        if (e->events & EPOLLIN) {
+            if (it->handler.handle_read) {
+                it->handler.handle_read(&key);
+            }
+        }
+        
+        if (e->events & EPOLLOUT) {
+            if (it->handler.handle_write) {
+                it->handler.handle_write(&key);
+            }
+        }
+        
+        if (e->events & (EPOLLERR | EPOLLHUP)) {
+            if (it->handler.handle_close) {
+                it->handler.handle_close(&key);
+            }
+        }
+    }
+    
+    return SELECTOR_SUCCESS;
+}
+
+const char *selector_error(fd_selector s) {
+    (void)s;  // Unused parameter
+    return strerror(errno);
 }

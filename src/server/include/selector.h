@@ -100,5 +100,8 @@ selector_status selector_set_interest(fd_selector s, int fd, fd_interest i);
 /// @return 
 selector_status selector_set_interest_key(struct selector_key *key, fd_interest i);
 
+int selector_fd_set_nio(int fd);
+selector_status selector_select(fd_selector s);
+const char *selector_error(fd_selector s);
 
 #endif

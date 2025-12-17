@@ -45,7 +45,7 @@ run-server: $(SERVER_BIN)
 	./$(SERVER_BIN)
 
 clean:
-	rm -rf $(BIN_DIR) $(OBJ_DIR)
+	rm -rf $(BIN_DIR) $(BUILD_DIR)
 
 rebuild: clean all
 
@@ -60,4 +60,11 @@ help:
 	@echo "  rebuild      - Clean and rebuild everything"
 	@echo "  help         - Show this help message"
 
-.PHONY: all client server run-client run-server clean rebuild help
+#Add test target for future use
+TEST_SOURCES = $(wildcard $(SERVER_LIB)/*_test.c)
+TEST_OBJECTS = $(patsubst $(SERVER_LIB)/%.c,$(BUILD_DIR)/tests/%.o,$(TEST_SOURCES))
+
+test: $(TEST_OBJECTS)
+	@echo "Tests not yet implemented"
+
+.PHONY: all client server run-client run-server clean rebuild help test
