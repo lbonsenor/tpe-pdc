@@ -6,6 +6,7 @@
 #include <sys/eventfd.h>
 #include <fcntl.h>
 #include <errno.h>  // Add this at the top with other includes
+#include <stdio.h> // For debugging prints
 
 #include "../include/selector.h"
 #include "selector.h"
@@ -52,24 +53,23 @@ selector_status selector_close(void)
     return SELECTOR_SUCCESS;
 }
 
-fd_selector selector_new(const size_t max_fds)
-{
-    fd_selector s = (fd_selector) malloc(sizeof(*s));
-    if (s == NULL)
-    {
+fd_selector selector_new(const size_t initial_elements) {
+    printf("DEBUG: selector_new called with initial_elements=%zu\n", initial_elements);
+    
+    fd_selector s = calloc(1, sizeof(*s));
+    
+    printf("DEBUG: calloc returned: %p\n", (void*)s);
+    
+    if (s == NULL) {
         return NULL;
     }
     
-    s->max_fds = max_fds;
-    s->fds = (item*) calloc(max_fds, sizeof(*s->fds));
-
-    if (s->fds == NULL)
-    {
-        free(s);
-        return NULL;
-    }
+    s->max_fds = initial_elements;
+    s->fds = calloc(initial_elements, sizeof(*s->fds));
     
-    for (size_t i = 0; i < max_fds; i++)
+    printf("DEBUG: allocated fds array: %p, size=%zu\n", (void*)s->fds, initial_elements);
+    
+    for (size_t i = 0; i < initial_elements; i++)
     {
         s->fds[i].fd = INVALID_FD;                      // Los inicializo como invalidos
     }
@@ -165,10 +165,13 @@ static u_int32_t interest_to_epoll(fd_interest interest) {
     
 }
 
-selector_status selector_register(fd_selector s, int fd, const fd_handler *handler, fd_interest interest, void *data)
-{
-    if (s == NULL || fd < 0 || fd >= (int)s->max_fds || handler == NULL)
-    {
+selector_status selector_register(fd_selector s, int fd, const fd_handler *handler,
+                                   fd_interest interest, void *data) {
+    printf("DEBUG: selector_register called: fd=%d, interest=%d\n", fd, interest);
+    
+    if (s == NULL || handler == NULL || fd < 0 || fd >= (int)s->max_fds) {  // Add handler == NULL check
+        printf("DEBUG: Invalid args: s=%p, handler=%p, fd=%d, max_fds=%zu\n", 
+               (void*)s, (void*)handler, fd, s ? s->max_fds : 0);
         return SELECTOR_IARGS;
     }
     
@@ -180,22 +183,28 @@ selector_status selector_register(fd_selector s, int fd, const fd_handler *handl
         return SELECTOR_IARGS;
     }
     
+    // Set up the item
     s->fds[fd].fd = fd;
-    s->fds[fd].data = data;
-    s->fds[fd].interest = interest;
     s->fds[fd].handler = *handler;
-
-    struct epoll_event ev;
-    ev.events = interest_to_epoll(interest);
-    ev.data.fd = fd;
-
-    if (epoll_ctl(s->epoll_fd, EPOLL_CTL_ADD, fd, &ev) == -1)
-    {
-        s->fds[fd].fd = -1;
-        pthread_mutex_unlock(&s->mutex);
+    s->fds[fd].data = data;
+    
+    // Add to epoll
+    struct epoll_event event;
+    event.events = 0;
+    
+    if (interest & OP_READ) {
+        event.events |= EPOLLIN;
+    }
+    if (interest & OP_WRITE) {
+        event.events |= EPOLLOUT;
+    }
+    
+    event.data.ptr = &s->fds[fd];  // IMPORTANT: Set pointer to the item!
+    
+    if (epoll_ctl(s->epoll_fd, EPOLL_CTL_ADD, fd, &event) < 0) {
         return SELECTOR_IO;
     }
-
+    
     pthread_mutex_unlock(&s->mutex);
     return SELECTOR_SUCCESS;
 }
@@ -253,11 +262,40 @@ selector_status selector_set_interest(fd_selector s, int fd, fd_interest i) {
     return SELECTOR_SUCCESS;
 }
 
-selector_status selector_set_interest_key(struct selector_key *key, fd_interest i) {
-    if (key == NULL) {
+selector_status selector_set_interest_key(struct selector_key *key, fd_interest interest) {
+    if (key == NULL || key->s == NULL) {
         return SELECTOR_IARGS;
     }
-    return selector_set_interest(key->s, key->fd, i);
+    
+    fd_selector s = key->s;
+    int fd = key->fd;
+    
+    printf("DEBUG: selector_set_interest_key: fd=%d, interest=%d\n", fd, interest);
+    
+    if (fd < 0 || fd >= (int)s->max_fds) {
+        return SELECTOR_IARGS;
+    }
+    
+    // DON'T modify the handler - just update epoll interest
+    struct epoll_event event;
+    event.events = 0;
+    event.data.ptr = &s->fds[fd];  // Keep the same data pointer
+    
+    if (interest & OP_READ) {
+        event.events |= EPOLLIN;
+    }
+    if (interest & OP_WRITE) {
+        event.events |= EPOLLOUT;
+    }
+    
+    printf("DEBUG: epoll_ctl MOD fd=%d, events=0x%x\n", fd, event.events);
+    
+    if (epoll_ctl(s->epoll_fd, EPOLL_CTL_MOD, fd, &event) < 0) {
+        perror("epoll_ctl MOD");
+        return SELECTOR_IO;
+    }
+    
+    return SELECTOR_SUCCESS;
 }
 
 int selector_fd_set_nio(int fd) {
@@ -275,13 +313,15 @@ selector_status selector_select(fd_selector s) {
 
     struct epoll_event events[MAX_EVENTS];
     int timeout = selector_config.select_timeout.tv_sec * 1000 + 
-                  selector_config.select_timeout.tv_nsec / 1000000;  // Convert nanoseconds to milliseconds
+                  selector_config.select_timeout.tv_nsec / 1000000;
     
     int n = epoll_wait(s->epoll_fd, events, MAX_EVENTS, timeout);
     
+    printf("DEBUG: epoll_wait returned n=%d\n", n);
+    
     if (n < 0) {
         if (errno == EINTR) {
-            return SELECTOR_SUCCESS;  // Interrupted, not an error
+            return SELECTOR_SUCCESS;
         }
         return SELECTOR_IO;
     }
@@ -290,7 +330,20 @@ selector_status selector_select(fd_selector s) {
         struct epoll_event *e = &events[i];
         item *it = (item *)e->data.ptr;
         
-        if (it == NULL || it->fd == INVALID_FD) {
+        if (it == NULL) {
+            printf("DEBUG: Event %d has NULL data.ptr, skipping\n", i);
+            continue;
+        }
+        
+        printf("DEBUG: Processing event %d: fd=%d, events=0x%x, it=%p\n", 
+               i, it->fd, e->events, (void*)it);
+        printf("DEBUG: it->handler: read=%p, write=%p, close=%p\n",
+               (void*)it->handler.handle_read,
+               (void*)it->handler.handle_write,
+               (void*)it->handler.handle_close);
+        
+        if (it->fd == INVALID_FD) {
+            printf("DEBUG: fd is INVALID_FD, skipping\n");
             continue;
         }
         
@@ -301,18 +354,33 @@ selector_status selector_select(fd_selector s) {
         };
         
         if (e->events & EPOLLIN) {
+            printf("DEBUG: EPOLLIN event, handle_read=%p\n", 
+                   (void*)(it->handler.handle_read));
+            
             if (it->handler.handle_read) {
+                printf("DEBUG: Calling handle_read for fd=%d\n", it->fd);
                 it->handler.handle_read(&key);
+                printf("DEBUG: handle_read returned\n");
+            } else {
+                printf("DEBUG: handle_read is NULL!\n");
             }
         }
         
         if (e->events & EPOLLOUT) {
+            printf("DEBUG: EPOLLOUT event, handle_write=%p\n", 
+                   (void*)(it->handler.handle_write));
+            
             if (it->handler.handle_write) {
+                printf("DEBUG: Calling handle_write for fd=%d\n", it->fd);
                 it->handler.handle_write(&key);
+                printf("DEBUG: handle_write returned\n");
+            } else {
+                printf("DEBUG: handle_write is NULL!\n");
             }
         }
         
-        if (e->events & (EPOLLERR | EPOLLHUP)) {
+        if (e->events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)) {
+            printf("DEBUG: Error/Hangup event for fd=%d\n", it->fd);
             if (it->handler.handle_close) {
                 it->handler.handle_close(&key);
             }

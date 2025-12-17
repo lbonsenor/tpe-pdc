@@ -25,15 +25,15 @@ struct selector_key;
 
 struct state_machine {
     /** declaración de cual es el estado inicial */
-    unsigned                      initial;
+    unsigned int                      initial;
     /**
      * declaracion de los estados: deben estar ordenados segun .[].state.
      */
     const struct state_definition *states;
     /** cantidad de estados */
-    unsigned                      max_state;
+    unsigned int                      max_state;
     /** estado actual */
-    const struct state_definition *current;
+    unsigned int current;  // Change from: const struct state_definition *current;
 };
 
 /**
@@ -63,7 +63,7 @@ struct state_definition {
 void
 stm_init(struct state_machine *stm);
 
-/** obtiene el identificador del estado actual */
+/** obtiene el identificador del estado current */
 unsigned
 stm_state        (struct state_machine *stm);
 

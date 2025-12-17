@@ -70,8 +70,41 @@ int main(const int argc, const char **argv) {
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_port        = htons(port);
 
+    printf("DEBUG: About to call selector_init\n");
+
+    const struct selector_init conf = {
+        .signal = SIGALRM,
+        .select_timeout = {
+            .tv_sec  = 10,
+            .tv_nsec = 0,
+        }
+    };
+
+    if(0 != selector_init(&conf)) {
+        err_msg = "initializing selector";
+        goto finally;
+    }
+
+    printf("DEBUG: selector_init succeeded, calling selector_new\n");
+
+    selector = selector_new(1024);
+
+    printf("DEBUG: selector_new returned: %p\n", (void*)selector);
+
+    if(selector == NULL) {
+        err_msg = "unable to create selector";
+        goto finally;
+    }
+
+    printf("DEBUG: selector created successfully\n");
+
     const int server = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+
+    printf("DEBUG: socket() returned fd=%d\n", server);  // Add this
+    fflush(stdout);
+
     if(server < 0) {
+        perror("socket");
         err_msg = "unable to create socket";
         goto finally;
     }
@@ -87,9 +120,13 @@ int main(const int argc, const char **argv) {
     }
 
     if (listen(server, 20) < 0) {
+        perror("listen");
         err_msg = "unable to listen";
         goto finally;
     }
+
+    printf("DEBUG: listen() succeeded on fd=%d\n", server);  // Add this
+    fflush(stdout);
 
     // registrar sigterm es útil para terminar el programa normalmente.
     // esto ayuda mucho en herramientas como valgrind.
@@ -100,37 +137,35 @@ int main(const int argc, const char **argv) {
         err_msg = "getting server socket flags";
         goto finally;
     }
-    const struct selector_init conf = {
-        .signal = SIGALRM,
-        .select_timeout = {
-            .tv_sec  = 10,
-            .tv_nsec = 0,
-        },
-    };
-    if(0 != selector_init(&conf)) {
-        err_msg = "initializing selector";
-        goto finally;
-    }
 
-    selector = selector_new(1024);
-    if(selector == NULL) {
-        err_msg = "unable to create selector";
-        goto finally;
-    }
+    printf("DEBUG: Registering server socket fd=%d\n", server);  // Add this
+    fflush(stdout);
+
     const struct fd_handler socksv5 = {
         .handle_read       = socksv5_passive_accept,
         .handle_write      = NULL,
         .handle_close      = NULL, // nada que liberar
     };
-    ss = selector_register(selector, server, &socksv5,
-                                              OP_READ, NULL);
+
+    ss = selector_register(selector, server, &socksv5, OP_READ, NULL);
+
+    printf("DEBUG: selector_register returned: %d\n", ss);  // Add this
+    fflush(stdout);
+
     if(ss != SELECTOR_SUCCESS) {
         err_msg = "registering fd";
         goto finally;
     }
     for(;!done;) {
+        printf("DEBUG: Calling selector_select...\n");  // Add this
+        fflush(stdout);
+        
         err_msg = NULL;
         ss = selector_select(selector);
+        
+        printf("DEBUG: selector_select returned: %d\n", ss);  // Add this
+        fflush(stdout);
+        
         if(ss != SELECTOR_SUCCESS) {
             err_msg = "serving";
             goto finally;

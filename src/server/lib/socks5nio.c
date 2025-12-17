@@ -1,7 +1,7 @@
 /**
  * socks5nio.c  - controla el flujo de un proxy SOCKSv5 (sockets no bloqueantes)
  */
-//defines for freeaddrinfo (test feat)
+//defines for freeaddrinfo (test feature macros)
 #define _POSIX_C_SOURCE 200112L
 #define _DEFAULT_SOURCE
 #include <stdio.h>
@@ -226,6 +226,7 @@ socks5_destroy_(struct socks5* s) {
 static void hello_read_init(const unsigned state, struct selector_key *key);
 static unsigned hello_read(struct selector_key *key);
 static unsigned hello_write(struct selector_key *key);  // Add this line
+static unsigned hello_process(struct selector_key *key);
 
 /** definición de handlers para cada estado */
 static const struct state_definition client_statbl[] = {
@@ -239,42 +240,52 @@ static const struct state_definition client_statbl[] = {
         .on_write_ready   = hello_write,
     },
     {
+        .state            = DONE,
+        // No handlers - terminal state
+    },
+    {
         .state            = ERROR,
+        // No handlers - terminal state
     },
 };
 
 static struct socks5 *
 socks5_new(int client_fd) {
-    struct socks5 *ret;
-
-    if (pool == NULL) {
-        ret = malloc(sizeof(*ret));
-    } else {
-        ret       = pool;
-        pool      = pool->next;
-        ret->next = NULL;
-        pool_size--;
+    printf("DEBUG: socks5_new called with fd=%d\n", client_fd);
+    
+    struct socks5 *ret = malloc(sizeof(*ret));
+    
+    printf("DEBUG: malloc returned %p\n", (void*)ret);
+    
+    if(ret == NULL) {
+        goto finally;
     }
-
-    if (ret == NULL) {
-        return NULL;
-    }
-
-    memset(ret, 0, sizeof(*ret));
-
-    ret->client_fd          = client_fd;
-    ret->origin_fd          = -1;
-    ret->origin_resolution  = NULL;
-    ret->references         = 1;
-
-    buffer_init(&ret->read_buffer,  N(ret->raw_buff_a), ret->raw_buff_a);
+    
+    memset(ret, 0x00, sizeof(*ret));
+    
+    printf("DEBUG: Initializing state machine\n");
+    
+    ret->client_fd = client_fd;
+    
+    // Initialize buffers
+    buffer_init(&ret->read_buffer, N(ret->raw_buff_a), ret->raw_buff_a);
     buffer_init(&ret->write_buffer, N(ret->raw_buff_b), ret->raw_buff_b);
-
+    
+    ret->client.hello.rb = &(ret->read_buffer);
+    ret->client.hello.wb = &(ret->write_buffer);
+    
+    // Initialize state machine BEFORE calling stm_init
     ret->stm.initial   = HELLO_READ;
-    ret->stm.max_state = ERROR;
+    ret->stm.max_state = DONE;  // Change from ERROR to DONE
     ret->stm.states    = client_statbl;
+    
+    printf("DEBUG: About to call stm_init\n");
     stm_init(&ret->stm);
-
+    printf("DEBUG: stm_init returned\n");
+    
+    printf("DEBUG: socks5_new completed successfully\n");
+    
+finally:
     return ret;
 }
 
@@ -320,6 +331,7 @@ static void socksv5_read   (struct selector_key *key);
 static void socksv5_write  (struct selector_key *key);
 static void socksv5_block  (struct selector_key *key);
 static void socksv5_close  (struct selector_key *key);
+
 static const struct fd_handler socks5_handler = {
     .handle_read   = socksv5_read,
     .handle_write  = socksv5_write,
@@ -330,108 +342,90 @@ static const struct fd_handler socks5_handler = {
 /** Intenta aceptar la nueva conexión entrante*/
 void
 socksv5_passive_accept(struct selector_key *key) {
-    struct sockaddr_storage       client_addr;
-    socklen_t                     client_addr_len = sizeof(client_addr);
-    struct socks5                *state           = NULL;
+    struct sockaddr_storage client_addr;
+    socklen_t client_addr_len = sizeof(client_addr);
+    struct socks5 *state = NULL;
 
     const int client = accept(key->fd, (struct sockaddr*) &client_addr,
                                                           &client_addr_len);
+    
+    printf("DEBUG: Accepted client fd=%d\n", client);
+    
     if(client == -1) {
         goto fail;
     }
-    state = socks5_new(client);
-    if(state == NULL) {
-        // sin un estado, nos es imposible manejaro.
-        // tal vez deberiamos apagar accept() hasta que detectemos
-        // que se liberó alguna conexión.
+    
+    printf("DEBUG: Setting client fd to non-blocking\n");
+    if(selector_fd_set_nio(client) == -1) {
+        printf("DEBUG: Failed to set non-blocking\n");
         goto fail;
     }
+    
+    printf("DEBUG: Creating socks5 state\n");
+    state = socks5_new(client);
+    if(state == NULL) {
+        printf("DEBUG: Failed to create socks5 state\n");
+        goto fail;
+    }
+    
+    printf("DEBUG: Copying client address\n");
     memcpy(&state->client_addr, &client_addr, client_addr_len);
     state->client_addr_len = client_addr_len;
 
+    printf("DEBUG: Registering client fd=%d with selector\n", client);
     if(SELECTOR_SUCCESS != selector_register(key->s, client, &socks5_handler,
                                               OP_READ, state)) {
+        printf("DEBUG: Failed to register client with selector\n");
         goto fail;
     }
-    return ;
+    
+    printf("DEBUG: Successfully registered client\n");
+    return;
+    
 fail:
+    printf("DEBUG: In fail block, client=%d, state=%p\n", client, (void*)state);
     if(client != -1) {
         close(client);
     }
     socks5_destroy(state);
 }
 
-////////////////////////////////////////////////////////////////////////////////
-// HELLO
-////////////////////////////////////////////////////////////////////////////////
-
-/** callback del parser utilizado en `read_hello' */
-static void
-on_hello_method(struct hello_parser *p, const uint8_t method) {
-    uint8_t *selected  = p->data;
-
-    if(SOCKS_HELLO_NOAUTHENTICATION_REQUIRED == method) {
-       *selected = method;
-    }
-}
-
-/** inicializa las variables de los estados HELLO_… */
 static void
 hello_read_init(const unsigned state, struct selector_key *key) {
+    (void)state;
     struct hello_st *d = &ATTACHMENT(key)->client.hello;
-
-    d->rb                              = &(ATTACHMENT(key)->read_buffer);
-    d->wb                              = &(ATTACHMENT(key)->write_buffer);
-    d->parser.data                     = &d->method;
-    d->parser.on_authentication_method = on_hello_method, hello_parser_init(
-            &d->parser);
+    
+    d->rb = &(ATTACHMENT(key)->read_buffer);
+    d->wb = &(ATTACHMENT(key)->write_buffer);
+    
+    hello_parser_init(&d->parser);
 }
 
-static unsigned
-hello_process(const struct hello_st* d);
-
-/** lee todos los bytes del mensaje de tipo `hello' y inicia su proceso */
 static unsigned
 hello_read(struct selector_key *key) {
     struct hello_st *d = &ATTACHMENT(key)->client.hello;
-    unsigned  ret      = HELLO_READ;
-        bool  error    = false;
-     uint8_t *ptr;
-      size_t  count;
-     ssize_t  n;
-
-    ptr = buffer_write_ptr(d->rb, &count);
-    n = recv(key->fd, ptr, count, 0);
-    if(n > 0) {
-        buffer_write_adv(d->rb, n);
-        const enum hello_state st = hello_consume(d->rb, &d->parser, &error);
-        if(hello_is_done(st, 0)) {
-            if(SELECTOR_SUCCESS == selector_set_interest_key(key, OP_WRITE)) {
-                ret = hello_process(d);
-            } else {
+    unsigned ret = HELLO_READ;
+    bool error = false;
+    
+    buffer *b = d->rb;
+    size_t nbytes;
+    uint8_t *ptr = buffer_write_ptr(b, &nbytes);
+    ssize_t n = recv(key->fd, ptr, nbytes, 0);
+    
+    if (n > 0) {
+        buffer_write_adv(b, n);
+        enum hello_state st = hello_consume(b, &d->parser, &error);
+        if (hello_is_done(st, &error)) {
+            if (error) {
                 ret = ERROR;
+            } else {
+                ret = hello_process(key);
             }
         }
     } else {
         ret = ERROR;
     }
-
-    return error ? ERROR : ret;
-}
-
-/** procesamiento del mensaje `hello' */
-static unsigned
-hello_process(const struct hello_st* d) {
-    unsigned ret = HELLO_WRITE;
-
-    uint8_t m = d->method;
-    const uint8_t r = (m == SOCKS_HELLO_NO_ACCEPTABLE_METHODS) ? 0xFF : 0x00;
-    if (-1 == hello_marshall(d->wb, r)) {
-        ret  = ERROR;
-    }
-    if (SOCKS_HELLO_NO_ACCEPTABLE_METHODS == m) {
-        ret  = ERROR;
-    }
+    
     return ret;
 }
 
@@ -440,59 +434,104 @@ hello_write(struct selector_key *key) {
     struct hello_st *d = &ATTACHMENT(key)->client.hello;
     unsigned ret = HELLO_WRITE;
     
+    printf("DEBUG: hello_write called for fd=%d\n", key->fd);
+    
     buffer *b = d->wb;
     size_t nbytes;
     uint8_t *ptr = buffer_read_ptr(b, &nbytes);
+    
+    printf("DEBUG: Sending %zu bytes\n", nbytes);
+    
     ssize_t n = send(key->fd, ptr, nbytes, MSG_NOSIGNAL);
     
     if (n == -1) {
+        printf("DEBUG: send failed: %s\n", strerror(errno));
         ret = ERROR;
     } else {
+        printf("DEBUG: Sent %zd bytes\n", n);
         buffer_read_adv(b, n);
+        
         if (!buffer_can_read(b)) {
-            if (selector_set_interest_key(key, OP_READ) == SELECTOR_SUCCESS) {
-                ret = HELLO_READ;  // Or next state
-            } else {
-                ret = ERROR;
-            }
+            printf("DEBUG: Write complete, transitioning to DONE\n");
+            ret = DONE;  // HELLO handshake complete
+            
+            // Since we're done, close the connection or move to next state
+            // For now, just mark as done
+            selector_set_interest_key(key, OP_NOOP);  // No more events
         }
+    }
+    
+    printf("DEBUG: hello_write returning state=%u\n", ret);
+    return ret;
+}
+
+static unsigned
+hello_process(struct selector_key *key) {
+    struct hello_st *d = &ATTACHMENT(key)->client.hello;
+    unsigned ret = HELLO_WRITE;
+    
+    // Determine which authentication method to use
+    // For now, just accept NO AUTHENTICATION (0x00)
+    uint8_t method = 0x00;
+    
+    // Marshall the response into write buffer
+    if (hello_marshall(d->wb, method) == -1) {
+        ret = ERROR;
+    } else {
+        // Switch to write mode
+        selector_set_interest_key(key, OP_WRITE);
     }
     
     return ret;
 }
 
-///////////////////////////////////////////////////////////////////////////////
-// Handlers top level de la conexión pasiva.
-// son los que emiten los eventos a la maquina de estados.
 static void
-socksv5_done(struct selector_key* key);
+socksv5_done(struct selector_key *key) {
+    // Unregister and close the connection
+    if (key->fd != -1) {
+        selector_unregister(key->s, key->fd);
+        close(key->fd);
+    }
+}
 
 static void
 socksv5_read(struct selector_key *key) {
-    struct state_machine *stm   = &ATTACHMENT(key)->stm;
+    struct state_machine *stm = &ATTACHMENT(key)->stm;
+    
+    printf("DEBUG: socksv5_read called, current state=%u\n", stm->current);
+    
     const enum socks_v5state st = stm_handler_read(stm, key);
-
-    if(ERROR == st || DONE == st) {
+    
+    printf("DEBUG: stm_handler_read returned state=%u\n", st);
+    
+    if (ERROR == st || DONE == st) {
+        printf("DEBUG: Terminal state reached in read, calling socksv5_done\n");
         socksv5_done(key);
     }
 }
 
 static void
 socksv5_write(struct selector_key *key) {
-    struct state_machine *stm   = &ATTACHMENT(key)->stm;
+    struct state_machine *stm = &ATTACHMENT(key)->stm;
+    
+    printf("DEBUG: socksv5_write called, current state=%u\n", stm->current);
+    
     const enum socks_v5state st = stm_handler_write(stm, key);
-
-    if(ERROR == st || DONE == st) {
+    
+    printf("DEBUG: stm_handler_write returned state=%u\n", st);
+    
+    if (ERROR == st || DONE == st) {
+        printf("DEBUG: Terminal state reached, calling socksv5_done\n");
         socksv5_done(key);
     }
 }
 
 static void
 socksv5_block(struct selector_key *key) {
-    struct state_machine *stm   = &ATTACHMENT(key)->stm;
+    struct state_machine *stm = &ATTACHMENT(key)->stm;
     const enum socks_v5state st = stm_handler_block(stm, key);
-
-    if(ERROR == st || DONE == st) {
+    
+    if (ERROR == st || DONE == st) {
         socksv5_done(key);
     }
 }
@@ -500,20 +539,4 @@ socksv5_block(struct selector_key *key) {
 static void
 socksv5_close(struct selector_key *key) {
     socks5_destroy(ATTACHMENT(key));
-}
-
-static void
-socksv5_done(struct selector_key* key) {
-    const int fds[] = {
-        ATTACHMENT(key)->client_fd,
-        ATTACHMENT(key)->origin_fd,
-    };
-    for(unsigned i = 0; i < N(fds); i++) {
-        if(fds[i] != -1) {
-            if(SELECTOR_SUCCESS != selector_unregister(key->s, fds[i])) {  // Changed from selector_unregister_fd
-                abort();
-            }
-            close(fds[i]);
-        }
-    }
 }
