@@ -5,6 +5,9 @@
  * request.h - Parser para REQUEST de SOCKSv5
  */
 
+#include <stdbool.h>
+
+#include "buffer.h"
 
 // https://en.wikipedia.org/wiki/SOCKS#SOCKS5:~:text=Client%20connection%20request 
 enum socks_cmd {
@@ -75,6 +78,33 @@ struct request_parser
 
     void *data;
 } request_parser;
+
+/// @brief Inicializa el parser
+/// @param p 
+void request_parser_init(struct request_parser *p);
+
+/// @brief Parsea datos del buffer
+/// @param b        Buffer con datos
+/// @param p        Parser
+/// @param error    Se setea a true si hay error de protocolo
+/// @return Estado del parser
+enum request_state request_consume(buffer *b, struct request_parser *p, bool *error);
+
+/// @brief Validacion de completitud del parseo
+/// @param state
+/// @param error 
+/// @return True si el parseo esta completo
+bool is_request_done(enum request_state state, bool *error);
+
+/// @brief Escribe la respuesta REQUEST al buffer
+/// @param b        Buffer donde escribir
+/// @param reply    Código de respuesta
+/// @return 0 si OK, -1 si el buffer se llenó
+int request_marshall(buffer *b, enum socks_reply reply);
+
+/// @brief Cierra el parser
+/// @param p 
+void request_parser_close(struct request_parser *p);
 
 
 #endif
