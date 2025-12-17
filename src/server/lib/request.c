@@ -183,3 +183,41 @@ enum request_state request_consume(buffer *b, struct request_parser *p, bool *er
     return p->state;
 
 }
+
+int request_marshall(buffer *b, enum socks_reply reply)
+{
+    if (b == NULL || !buffer_can_write(b))
+    {
+        return -1;
+    }
+    
+    size_t nbytes;
+    uint8_t *ptr = buffer_write_ptr(b, &nbytes);
+
+    if (nbytes < 10)
+    {
+        return -1;
+    }
+    
+    ptr[0] = 0x05;           // VER
+    ptr[1] = reply;          // REP
+    ptr[2] = 0x00;           // RSV
+    ptr[3] = 0x01;           // ATYP = IPv4
+    ptr[4] = 0x00;           // BND.ADDR = 0.0.0.0
+    ptr[5] = 0x00;
+    ptr[6] = 0x00;
+    ptr[7] = 0x00;
+    ptr[8] = 0x00;           // BND.PORT = 0
+    ptr[9] = 0x00;
+
+    buffer_write_adv(b, 10);
+
+    return 0;
+}
+
+bool is_request_done(enum request_state state, bool *error)
+{
+    return state == REQUEST_DONE || state == REQUEST_ERROR;
+}
+
+
