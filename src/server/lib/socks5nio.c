@@ -207,7 +207,6 @@ static const uint32_t       max_pool    = 50;  // ? - Esta en minusculas, asumo 
 static uint32_t             pool_size   = 0;
 static struct socks5        *pool       = NULL;
 
-// TODO - static struct socks5* socks5_new(int client_fd)
 static struct socks5 *
 socks5_new(int client_fd) {
     struct socks5 *ret;
