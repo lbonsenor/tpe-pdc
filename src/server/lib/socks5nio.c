@@ -390,6 +390,8 @@ fail:
     socks5_destroy(state);
 }
 
+// Keep these functions (they handle I/O, not protocol):
+
 static void
 hello_read_init(const unsigned state, struct selector_key *key) {
     (void)state;
@@ -398,7 +400,7 @@ hello_read_init(const unsigned state, struct selector_key *key) {
     d->rb = &(ATTACHMENT(key)->read_buffer);
     d->wb = &(ATTACHMENT(key)->write_buffer);
     
-    hello_parser_init(&d->parser);
+    hello_parser_init(&d->parser);  // Calls hello.c function
 }
 
 static unsigned
@@ -414,8 +416,8 @@ hello_read(struct selector_key *key) {
     
     if (n > 0) {
         buffer_write_adv(b, n);
-        enum hello_state st = hello_consume(b, &d->parser, &error);
-        if (hello_is_done(st, &error)) {
+        enum hello_state st = hello_consume(b, &d->parser, &error);  // Calls hello.c
+        if (hello_is_done(st, &error)) {  // Calls hello.c
             if (error) {
                 ret = ERROR;
             } else {
@@ -430,56 +432,39 @@ hello_read(struct selector_key *key) {
 }
 
 static unsigned
-hello_write(struct selector_key *key) {
-    struct hello_st *d = &ATTACHMENT(key)->client.hello;
-    unsigned ret = HELLO_WRITE;
-    
-    printf("DEBUG: hello_write called for fd=%d\n", key->fd);
-    
-    buffer *b = d->wb;
-    size_t nbytes;
-    uint8_t *ptr = buffer_read_ptr(b, &nbytes);
-    
-    printf("DEBUG: Sending %zu bytes\n", nbytes);
-    
-    ssize_t n = send(key->fd, ptr, nbytes, MSG_NOSIGNAL);
-    
-    if (n == -1) {
-        printf("DEBUG: send failed: %s\n", strerror(errno));
-        ret = ERROR;
-    } else {
-        printf("DEBUG: Sent %zd bytes\n", n);
-        buffer_read_adv(b, n);
-        
-        if (!buffer_can_read(b)) {
-            printf("DEBUG: Write complete, transitioning to DONE\n");
-            ret = DONE;  // HELLO handshake complete
-            
-            // Since we're done, close the connection or move to next state
-            // For now, just mark as done
-            selector_set_interest_key(key, OP_NOOP);  // No more events
-        }
-    }
-    
-    printf("DEBUG: hello_write returning state=%u\n", ret);
-    return ret;
-}
-
-static unsigned
 hello_process(struct selector_key *key) {
     struct hello_st *d = &ATTACHMENT(key)->client.hello;
     unsigned ret = HELLO_WRITE;
     
-    // Determine which authentication method to use
-    // For now, just accept NO AUTHENTICATION (0x00)
-    uint8_t method = 0x00;
+    uint8_t method = 0x00;  // NO_AUTH
     
-    // Marshall the response into write buffer
-    if (hello_marshall(d->wb, method) == -1) {
+    if (hello_marshall(d->wb, method) == -1) {  // Calls hello.c
         ret = ERROR;
     } else {
-        // Switch to write mode
         selector_set_interest_key(key, OP_WRITE);
+    }
+    
+    return ret;
+}
+
+static unsigned
+hello_write(struct selector_key *key) {
+    struct hello_st *d = &ATTACHMENT(key)->client.hello;
+    unsigned ret = HELLO_WRITE;
+    
+    buffer *b = d->wb;
+    size_t nbytes;
+    uint8_t *ptr = buffer_read_ptr(b, &nbytes);
+    ssize_t n = send(key->fd, ptr, nbytes, MSG_NOSIGNAL);
+    
+    if (n == -1) {
+        ret = ERROR;
+    } else {
+        buffer_read_adv(b, n);
+        if (!buffer_can_read(b)) {
+            ret = DONE;  // Or REQUEST_READ if continuing
+            selector_set_interest_key(key, OP_NOOP);
+        }
     }
     
     return ret;

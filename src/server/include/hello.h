@@ -3,68 +3,38 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-
-// Forward declaration or include
-typedef struct buffer buffer;  // Add this if buffer.h isn't included
-
-/**
- * hello.h - Parser para mensaje HELLO de SOCKS5
- */
-
-#define SOCKS_VERSION 0x05
-
-enum socks_hello_method {
-    SOCKS_HELLO_NOAUTHENTICATION_REQUIRED   = 0x00,
-    SOCKS_HELLO_GSSAPI                      = 0x01,
-    SOCKS_HELLO_USERNAME_PASSWORD           = 0x02,
-    SOCKS_HELLO_NO_ACCEPTABLE_METHODS       = 0xFF
-};
+#include "buffer.h"
 
 enum hello_state {
-    HELLO_VERSION,
-    HELLO_NMETHODS,
-    HELLO_METHODS,
-    HELLO_DONE,
-    HELLO_ERROR
+    hello_version,
+    hello_nmethods,
+    hello_methods,
+    hello_done,
+    hello_error,
 };
 
 struct hello_parser {
     enum hello_state state;
-
-    uint8_t version;
-    uint8_t nmethods; 
-    uint8_t methods_read;
-
-    void (*on_authentication_method)(struct hello_parser *p, uint8_t method);
-    void *data;
+    uint8_t remaining;  // Remaining methods to read
+    uint8_t method;     // Selected method (0x00 for NO_AUTH)
 };
 
-/// @brief Inicializacion de un parser
-/// @param p 
+/** Initialize hello parser */
 void hello_parser_init(struct hello_parser *p);
 
-/// @brief Parsea datos del buffer
-/// @param b        Buffer
-/// @param p        Parser
-/// @param error    Puntero a bool donde se seteara a true si hay error en el protocolo
-/// @return Estado del Parser
-enum hello_state hello_consume(buffer *b, struct hello_parser *p, bool *error);
+/** 
+ * Consume bytes from buffer and parse HELLO message 
+ * Returns current state, sets errored on parse error
+ */
+enum hello_state hello_consume(buffer *b, struct hello_parser *p, bool *errored);
 
-/// @brief Verificacion si el parseo se completó
-/// @param state
-/// @param error 
-/// @return 
-bool hello_is_done(enum hello_state state, bool *error);
+/** Check if parsing is complete */
+bool hello_is_done(enum hello_state state, bool *errored);
 
-/// @brief Escribe la respuesta HELLO al buffer
-/// @param b        Buffer donde escribir
-/// @param method   Método seleccionado
-/// @return 0 si OK, -1 si el buffer esta lleno
+/** 
+ * Marshall HELLO response into buffer
+ * Returns number of bytes written, -1 on error
+ */
 int hello_marshall(buffer *b, uint8_t method);
-
-/// @brief Cierra el parser
-/// @param p 
-/// @return 
-int hello_parser_close(struct hello_parser *p);
 
 #endif
