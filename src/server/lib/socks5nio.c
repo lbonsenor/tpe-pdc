@@ -212,17 +212,6 @@ static const uint32_t       max_pool    = 50;  // ? - Esta en minusculas, asumo 
 static uint32_t             pool_size   = 0;
 static struct socks5        *pool       = NULL;
 
-
-/** realmente destruye */
-static void
-socks5_destroy_(struct socks5* s) {
-    if(s->origin_resolution != NULL) {
-        freeaddrinfo(s->origin_resolution);
-        s->origin_resolution = 0;
-    }
-    free(s);
-}
-
 static void hello_read_init(const unsigned state, struct selector_key *key);
 static unsigned hello_read(struct selector_key *key);
 static unsigned hello_write(struct selector_key *key);  // Add this line
@@ -289,38 +278,6 @@ finally:
     return ret;
 }
 
-/**
- * destruye un  `struct socks5', tiene en cuenta las referencias
- * y el pool de objetos.
- */
-static void
-socks5_destroy(struct socks5 *s) {
-    if(s == NULL) {
-        // nada para hacer
-    } else if(s->references == 1) {
-        if(s != NULL) {
-            if(pool_size < max_pool) {
-                s->next = pool;
-                pool    = s;
-                pool_size++;
-            } else {
-                socks5_destroy_(s);
-            }
-        }
-    } else {
-        s->references -= 1;
-    }
-}
-
-void
-socksv5_pool_destroy(void) {
-    struct socks5 *next, *s;
-    for(s = pool; s != NULL ; s = next) {
-        next = s->next;
-        free(s);
-    }
-}
-
 /** obtiene el struct (socks5 *) desde la llave de selección  */
 #define ATTACHMENT(key) ( (struct socks5 *)(key)->data)
 
@@ -384,10 +341,14 @@ socksv5_passive_accept(struct selector_key *key) {
     
 fail:
     printf("DEBUG: In fail block, client=%d, state=%p\n", client, (void*)state);
-    if(client != -1) {
+    if (state != NULL) {
+        if (state->client_fd != -1) {
+            close(state->client_fd);
+        }
+        free(state);
+    } else if(client != -1) {
         close(client);
     }
-    socks5_destroy(state);
 }
 
 // Keep these functions (they handle I/O, not protocol):
@@ -472,13 +433,54 @@ hello_write(struct selector_key *key) {
 
 static void
 socksv5_done(struct selector_key *key) {
-    // Unregister and close the connection
-    if (key->fd != -1) {
-        selector_unregister(key->s, key->fd);
-        close(key->fd);
+    struct socks5 *s = ATTACHMENT(key);
+    
+    if (s == NULL) {
+        return;
     }
+    
+    int fd = key->fd;
+    printf("DEBUG: socksv5_done called for fd=%d\n", fd);
+    
+    // DON'T close the fds here - selector_unregister will handle it
+    // Just mark them as -1 so they won't be closed again
+    s->client_fd = -1;
+    s->origin_fd = -1;
+    
+    // Free the socks5 struct
+    free(s);
+    
+    // Unregister from selector (this will close the fd)
+    printf("DEBUG: About to unregister fd=%d\n", fd);
+    selector_unregister(key->s, fd);
+    
+    printf("DEBUG: socksv5_done completed\n");
 }
 
+static void
+socksv5_close(struct selector_key *key) {
+    // This is called by selector_destroy during cleanup
+    printf("DEBUG: socksv5_close called for fd=%d\n", key->fd);
+    
+    struct socks5 *s = ATTACHMENT(key);
+    
+    if (s != NULL) {
+        // Close any FDs that might still be open
+        if (s->client_fd != -1) {
+            close(s->client_fd);
+            s->client_fd = -1;
+        }
+        
+        if (s->origin_fd != -1) {
+            close(s->origin_fd);
+            s->origin_fd = -1;
+        }
+        
+        // Free the socks5 struct
+        free(s);
+        printf("DEBUG: socksv5_close freed socks5 struct\n");
+    }
+}
 static void
 socksv5_read(struct selector_key *key) {
     struct state_machine *stm = &ATTACHMENT(key)->stm;
@@ -519,9 +521,4 @@ socksv5_block(struct selector_key *key) {
     if (ERROR == st || DONE == st) {
         socksv5_done(key);
     }
-}
-
-static void
-socksv5_close(struct selector_key *key) {
-    socks5_destroy(ATTACHMENT(key));
 }

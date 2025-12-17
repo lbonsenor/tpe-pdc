@@ -121,28 +121,45 @@ void selector_destroy(fd_selector s) {
         return;
     }
     
-    // Close epoll_fd BEFORE freeing s->fds
+    printf("DEBUG: selector_destroy called\n");
+    
+    // Close all registered file descriptors and cleanup items
+    for (size_t i = 0; i < s->max_fds; i++) {
+        if (s->fds[i].fd != INVALID_FD) {
+            printf("DEBUG: Cleaning up fd=%d\n", s->fds[i].fd);
+            
+            // Call close handler if it exists (this should free the socks5 object)
+            if (s->fds[i].handler.handle_close) {
+                struct selector_key key = {
+                    .s = s,
+                    .fd = s->fds[i].fd,
+                    .data = s->fds[i].data,
+                };
+                printf("DEBUG: Calling handle_close for fd=%d, data=%p\n", 
+                       s->fds[i].fd, s->fds[i].data);
+                s->fds[i].handler.handle_close(&key);
+            } else {
+                printf("DEBUG: No close handler for fd=%d, data=%p (this is OK for server socket)\n",
+                       s->fds[i].fd, s->fds[i].data);
+            }
+            
+            close(s->fds[i].fd);
+            s->fds[i].fd = INVALID_FD;
+        }
+    }
+    
+    // Close epoll fd
     if (s->epoll_fd != -1) {
         close(s->epoll_fd);
     }
     
-    if (s->event_fd != -1) {
-        close(s->event_fd);
-    }
+    // Free the fds array
+    free(s->fds);
     
-    // Unregister all file descriptors
-    if (s->fds != NULL) {
-        for (size_t i = 0; i < s->max_fds; i++) {
-            if (s->fds[i].fd != INVALID_FD) {
-                // Don't close the fd here, just clean up
-                s->fds[i].fd = INVALID_FD;
-            }
-        }
-        free(s->fds);  // Free fds array
-        s->fds = NULL; // Prevent double-free
-    }
+    // Free the selector itself
+    free(s);
     
-    free(s);  // Free the selector itself LAST
+    printf("DEBUG: selector_destroy completed\n");
 }
 
 static u_int32_t interest_to_epoll(fd_interest interest) { 
@@ -209,27 +226,46 @@ selector_status selector_register(fd_selector s, int fd, const fd_handler *handl
     return SELECTOR_SUCCESS;
 }
 
-selector_status selector_unregister(fd_selector s, int fd) { 
-    if (s == NULL || fd < 0 || fd >= (int) s->max_fds)
-    {
-        return SELECTOR_IARGS;
-    }
-
-    pthread_mutex_lock(&s->mutex);
+void
+selector_unregister(fd_selector s, const int fd) {
+    printf("DEBUG: selector_unregister called with fd=%d\n", fd);
     
-    if (s->fds[fd].fd == INVALID_FD)
-    {
-        pthread_mutex_unlock(&s->mutex);
-        return SELECTOR_IARGS;
+    if (s == NULL || fd < 0 || fd >= (int)s->max_fds) {
+        printf("DEBUG: selector_unregister - invalid params\n");
+        return;
     }
-
-    epoll_ctl(s->epoll_fd, EPOLL_CTL_DEL, fd, NULL);
-
-    s->fds[fd].fd = INVALID_FD;
-    s->fds[fd].interest = OP_NOOP;
     
-    pthread_mutex_unlock(&s->mutex);
-    return SELECTOR_SUCCESS;
+    struct item *item = &s->fds[fd];
+    
+    if (item->fd == INVALID_FD) {
+        printf("DEBUG: selector_unregister - fd=%d already unregistered\n", fd);
+        return;
+    }
+    
+    printf("DEBUG: Removing fd=%d from epoll\n", fd);
+    
+    // Remove from epoll BEFORE closing the fd
+    if (s->epoll_fd != -1) {
+        struct epoll_event ev = {0};
+        int ret = epoll_ctl(s->epoll_fd, EPOLL_CTL_DEL, fd, &ev);
+        if (ret == -1) {
+            printf("DEBUG: epoll_ctl DEL failed for fd=%d: %s\n", 
+                   fd, strerror(errno));
+        } else {
+            printf("DEBUG: epoll_ctl DEL succeeded for fd=%d\n", fd);
+        }
+    }
+    
+    // Now close the file descriptor
+    printf("DEBUG: Closing fd=%d\n", fd);
+    close(fd);
+    
+    // Mark as invalid
+    item->fd = INVALID_FD;
+    item->interest = OP_NOOP;
+    item->data = NULL;
+    
+    printf("DEBUG: fd=%d unregistered and closed\n", fd);
 }
 
 selector_status selector_set_interest(fd_selector s, int fd, fd_interest i) {

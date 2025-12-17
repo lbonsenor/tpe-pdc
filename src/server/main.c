@@ -36,7 +36,19 @@ sigterm_handler(const int signal) {
     done = true;
 }
 
-int main(const int argc, const char **argv) {
+static void cleanup(fd_selector selector, int server_fd) {
+    if (server_fd != -1) {
+        close(server_fd);
+    }
+    
+    if (selector != NULL) {
+        selector_destroy(selector);  // This should free all resources
+    }
+}
+
+int main(const int argc, char **argv) {
+    selector_status err;  // Add this line
+    
     unsigned port = 1080;
 
     if(argc == 1) {
@@ -156,21 +168,21 @@ int main(const int argc, const char **argv) {
         err_msg = "registering fd";
         goto finally;
     }
-    for(;!done;) {
-        printf("DEBUG: Calling selector_select...\n");  // Add this
-        fflush(stdout);
+    while(!done) {
+        err = selector_select(selector);
         
-        err_msg = NULL;
-        ss = selector_select(selector);
-        
-        printf("DEBUG: selector_select returned: %d\n", ss);  // Add this
-        fflush(stdout);
-        
-        if(ss != SELECTOR_SUCCESS) {
-            err_msg = "serving";
-            goto finally;
+        if(err != SELECTOR_SUCCESS) {
+            if (errno == EINTR) {
+                continue;  // Just a signal, keep going
+            }
+            fprintf(stderr, "selector_select error: %s (errno=%d)\n", 
+                    selector_error(selector), errno);  // Change: pass selector, not err
+            break;
         }
     }
+    
+    fprintf(stderr, "Exiting main loop\n");
+    
     if(err_msg == NULL) {
         err_msg = "closing";
     }
@@ -187,15 +199,7 @@ finally:
         perror(err_msg);
         ret = 1;
     }
-    if(selector != NULL) {
-        selector_destroy(selector);
-    }
-    selector_close();
+    cleanup(selector, server);
 
-    socksv5_pool_destroy();
-
-    if(server >= 0) {
-        close(server);
-    }
     return ret;
 }

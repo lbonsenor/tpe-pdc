@@ -70,6 +70,7 @@ fd_selector selector_new(const size_t max_fds);
 
 /// @brief Destruye un selector
 /// @param s El selector a destruir
+/** Destroy selector and free all resources */
 void selector_destroy(fd_selector s);
 
 /// @brief Registra un fd en el selector
@@ -85,7 +86,7 @@ selector_status selector_register(fd_selector s, int fd, const fd_handler * hand
 /// @param s    Selector
 /// @param fd   File Descriptor
 /// @return 
-selector_status selector_unregister(fd_selector s, int fd);
+void selector_unregister(fd_selector s, const int fd);
 
 /// @brief Modifica los eventos de un file descriptor ya registrado
 /// @param s    Selector
