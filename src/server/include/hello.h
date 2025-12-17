@@ -2,6 +2,8 @@
 #define HELLO_H
 
 #include <stdbool.h>
+#include <buffer.h>
+#include <stdint.h>
 
 /**
  * hello.h - Parser para mensaje HELLO de SOCKS5
@@ -9,6 +11,7 @@
 
 #define SOCKS_VERSION 0x05
 
+// https://datatracker.ietf.org/doc/html/rfc1928#:~:text=METHOD,-are
 enum socks_hello_method {
     SOCKS_HELLO_NOAUTHENTICATION_REQUIRED   = 0x00,
     SOCKS_HELLO_GSSAPI                      = 0x01,
@@ -16,6 +19,7 @@ enum socks_hello_method {
     SOCKS_HELLO_NO_ACCEPTABLE_METHODS       = 0xFF
 };
 
+// https://datatracker.ietf.org/doc/html/rfc1928#:~:text=VER
 enum hello_state {
     HELLO_VERSION,
     HELLO_NMETHODS,

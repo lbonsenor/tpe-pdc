@@ -36,6 +36,7 @@ enum socks_reply {
     SOCKS_REPLY_ADDRESS_TYPE_NOT_SUPPORTED  = 0x08,
 };
 
+// https://datatracker.ietf.org/doc/html/rfc1928#:~:text=request,-is
 enum request_state {
     REQUEST_VERSION,
     REQUEST_CMD,
