@@ -67,17 +67,17 @@ struct request_parser
     
     // para fqdn
     uint8_t domain_len;
-    uint8_t domain_bytes_Read;
+    uint8_t domain_bytes_read;
 
     // para ipv4/6
     uint8_t addr_bytes_read;
 
     // port
     uint16_t dest_port;
-    uint8_t port_bytes_Read;
+    uint8_t port_bytes_read;
 
     void *data;
-} request_parser;
+};
 
 /// @brief Inicializa el parser
 /// @param p 
