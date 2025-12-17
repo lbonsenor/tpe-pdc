@@ -137,8 +137,8 @@ struct hello_st {
 
 struct request_st {
     buffer                 *rb, *wb;
-    struct request_parser   parser;     //TODO
-    enum socks_reply        reply;      //TODO
+    struct request_parser   parser;     
+    enum socks_reply        reply;      
     
     struct addrinfo        *current_addr;  
 };
@@ -207,6 +207,43 @@ static const uint32_t       max_pool    = 50;  // ? - Esta en minusculas, asumo 
 static uint32_t             pool_size   = 0;
 static struct socks5        *pool       = NULL;
 
+// TODO - static struct socks5* socks5_new(int client_fd)
+static struct socks5 *
+socks5_new(int client_fd) {
+    struct socks5 *ret;
+
+    if (pool != NULL)
+    {
+        ret = pool;
+        pool = pool->next;
+        ret->next = NULL;
+        pool_size--;
+    } else
+    {
+        ret = malloc(sizeof(*ret));
+        if (ret == NULL)
+        {
+            return NULL;
+        }  
+    }
+    
+    memset(ret, 0, sizeof(*ret));
+
+    ret->client_fd          = client_fd;
+    ret->origin_fd          = -1;
+    ret->origin_resolution  = NULL;
+    ret->references         = 1;
+
+    buffer_init(&ret->read_buffer, BUFFER_SIZE, ret->raw_buff_a);
+    buffer_init(&ret->write_buffer, BUFFER_SIZE, ret->raw_buff_b);
+
+    ret->stm.initial    = HELLO_READ;
+    ret->stm.max_state  = ERROR;
+    ret->stm.states     = client_statbl;
+
+    stm_init(&ret->stm);
+    return ret;
+}
 
 /** realmente destruye */
 static void
@@ -217,8 +254,6 @@ socks5_destroy_(struct socks5* s) {
     }
     free(s);
 }
-
-// TODO - static struct socks5* socks5_new(int client_fd)
 
 /**
  * destruye un  `struct socks5', tiene en cuenta las referencias
@@ -383,11 +418,36 @@ hello_process(const struct hello_st* d) {
 /** definición de handlers para cada estado */
 static const struct state_definition client_statbl[] = {
     {
-        .state            = HELLO_READ,
-        .on_arrival       = hello_read_init,
-        .on_departure     = hello_read_close,
-        .on_read_ready    = hello_read,
-    },
+        .state              = HELLO_READ,
+        .on_arrival         = hello_read_init,
+        .on_departure       = hello_read_close,     // TODO
+        .on_read_ready      = hello_read,
+    },{
+        .state              = HELLO_WRITE,
+        .on_write_ready     = hello_write,          // TODO
+    },{
+        .state              = REQUEST_READ,
+        .on_arrival         = request_init,         // TODO
+        .on_departure       = request_read_close,   // TODO
+        .on_read_ready      = request_read,         // TODO
+    },{
+        .state              = REQUEST_RESOLVE,
+        .on_block_ready     = request_resolve_done, // TODO
+    },{
+        .state              = REQUEST_CONNECTING,
+        .on_arrival         = connecting_init,      // TODO
+        .on_write_ready     = request_write,        // TODO
+    },{
+        .state              = REQUEST_WRITE,
+        .on_arrival         = copy_init,            // TODO
+        .on_read_ready      = copy_read,            // TODO
+        .on_write_ready     = copy_write,           // TODO
+    },{
+        .state              = DONE,
+    },{
+        .state              = ERROR
+    }
+};
 // …
 
 ///////////////////////////////////////////////////////////////////////////////
