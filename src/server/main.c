@@ -47,7 +47,7 @@ static void cleanup(fd_selector selector, int server_fd) {
 }
 
 int main(const int argc, char **argv) {
-    selector_status err;  // Add this line
+    selector_status err;
     
     unsigned port = 1080;
 
@@ -82,8 +82,6 @@ int main(const int argc, char **argv) {
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_port        = htons(port);
 
-    printf("DEBUG: About to call selector_init\n");
-
     const struct selector_init conf = {
         .signal = SIGALRM,
         .select_timeout = {
@@ -97,31 +95,23 @@ int main(const int argc, char **argv) {
         goto finally;
     }
 
-    printf("DEBUG: selector_init succeeded, calling selector_new\n");
-
     selector = selector_new(1024);
-
-    printf("DEBUG: selector_new returned: %p\n", (void*)selector);
 
     if(selector == NULL) {
         err_msg = "unable to create selector";
         goto finally;
     }
 
-    printf("DEBUG: selector created successfully\n");
-
     const int server = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 
-    printf("DEBUG: socket() returned fd=%d\n", server);  // Add this
-    fflush(stdout);
+    fprintf(stdout, "Listening on TCP port %d\n", port);
+    fflush(stdout);  // KEEP THIS ONE - ensures message shows before blocking
 
     if(server < 0) {
         perror("socket");
         err_msg = "unable to create socket";
         goto finally;
     }
-
-    fprintf(stdout, "Listening on TCP port %d\n", port);
 
     // man 7 ip. no importa reportar nada si falla.
     setsockopt(server, SOL_SOCKET, SO_REUSEADDR, &(int){ 1 }, sizeof(int));
@@ -137,9 +127,6 @@ int main(const int argc, char **argv) {
         goto finally;
     }
 
-    printf("DEBUG: listen() succeeded on fd=%d\n", server);  // Add this
-    fflush(stdout);
-
     // registrar sigterm es útil para terminar el programa normalmente.
     // esto ayuda mucho en herramientas como valgrind.
     signal(SIGTERM, sigterm_handler);
@@ -150,9 +137,6 @@ int main(const int argc, char **argv) {
         goto finally;
     }
 
-    printf("DEBUG: Registering server socket fd=%d\n", server);  // Add this
-    fflush(stdout);
-
     const struct fd_handler socksv5 = {
         .handle_read       = socksv5_passive_accept,
         .handle_write      = NULL,
@@ -161,27 +145,23 @@ int main(const int argc, char **argv) {
 
     ss = selector_register(selector, server, &socksv5, OP_READ, NULL);
 
-    printf("DEBUG: selector_register returned: %d\n", ss);  // Add this
-    fflush(stdout);
-
     if(ss != SELECTOR_SUCCESS) {
         err_msg = "registering fd";
         goto finally;
     }
+    
     while(!done) {
         err = selector_select(selector);
         
         if(err != SELECTOR_SUCCESS) {
             if (errno == EINTR) {
-                continue;  // Just a signal, keep going
+                continue;
             }
             fprintf(stderr, "selector_select error: %s (errno=%d)\n", 
-                    selector_error(selector), errno);  // Change: pass selector, not err
+                    selector_error(selector), errno);
             break;
         }
     }
-    
-    fprintf(stderr, "Exiting main loop\n");
     
     if(err_msg == NULL) {
         err_msg = "closing";
@@ -193,7 +173,7 @@ finally:
         fprintf(stderr, "%s: %s\n", (err_msg == NULL) ? "": err_msg,
                                   ss == SELECTOR_IO
                                       ? strerror(errno)
-                                      : selector_error(selector));  // CORRECT - pass selector
+                                      : selector_error(selector));
         ret = 2;
     } else if(err_msg) {
         perror(err_msg);

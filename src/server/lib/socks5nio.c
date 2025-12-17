@@ -240,11 +240,7 @@ static const struct state_definition client_statbl[] = {
 
 static struct socks5 *
 socks5_new(int client_fd) {
-    printf("DEBUG: socks5_new called with fd=%d\n", client_fd);
-    
     struct socks5 *ret = malloc(sizeof(*ret));
-    
-    printf("DEBUG: malloc returned %p\n", (void*)ret);
     
     if(ret == NULL) {
         goto finally;
@@ -252,27 +248,19 @@ socks5_new(int client_fd) {
     
     memset(ret, 0x00, sizeof(*ret));
     
-    printf("DEBUG: Initializing state machine\n");
-    
     ret->client_fd = client_fd;
     
-    // Initialize buffers
     buffer_init(&ret->read_buffer, N(ret->raw_buff_a), ret->raw_buff_a);
     buffer_init(&ret->write_buffer, N(ret->raw_buff_b), ret->raw_buff_b);
     
     ret->client.hello.rb = &(ret->read_buffer);
     ret->client.hello.wb = &(ret->write_buffer);
     
-    // Initialize state machine BEFORE calling stm_init
     ret->stm.initial   = HELLO_READ;
-    ret->stm.max_state = DONE;  // Change from ERROR to DONE
+    ret->stm.max_state = DONE;
     ret->stm.states    = client_statbl;
     
-    printf("DEBUG: About to call stm_init\n");
     stm_init(&ret->stm);
-    printf("DEBUG: stm_init returned\n");
-    
-    printf("DEBUG: socks5_new completed successfully\n");
     
 finally:
     return ret;
@@ -306,41 +294,30 @@ socksv5_passive_accept(struct selector_key *key) {
     const int client = accept(key->fd, (struct sockaddr*) &client_addr,
                                                           &client_addr_len);
     
-    printf("DEBUG: Accepted client fd=%d\n", client);
-    
     if(client == -1) {
         goto fail;
     }
     
-    printf("DEBUG: Setting client fd to non-blocking\n");
     if(selector_fd_set_nio(client) == -1) {
-        printf("DEBUG: Failed to set non-blocking\n");
         goto fail;
     }
     
-    printf("DEBUG: Creating socks5 state\n");
     state = socks5_new(client);
     if(state == NULL) {
-        printf("DEBUG: Failed to create socks5 state\n");
         goto fail;
     }
     
-    printf("DEBUG: Copying client address\n");
     memcpy(&state->client_addr, &client_addr, client_addr_len);
     state->client_addr_len = client_addr_len;
 
-    printf("DEBUG: Registering client fd=%d with selector\n", client);
     if(SELECTOR_SUCCESS != selector_register(key->s, client, &socks5_handler,
                                               OP_READ, state)) {
-        printf("DEBUG: Failed to register client with selector\n");
         goto fail;
     }
     
-    printf("DEBUG: Successfully registered client\n");
     return;
     
 fail:
-    printf("DEBUG: In fail block, client=%d, state=%p\n", client, (void*)state);
     if (state != NULL) {
         if (state->client_fd != -1) {
             close(state->client_fd);
@@ -440,32 +417,20 @@ socksv5_done(struct selector_key *key) {
     }
     
     int fd = key->fd;
-    printf("DEBUG: socksv5_done called for fd=%d\n", fd);
     
-    // DON'T close the fds here - selector_unregister will handle it
-    // Just mark them as -1 so they won't be closed again
     s->client_fd = -1;
     s->origin_fd = -1;
     
-    // Free the socks5 struct
     free(s);
     
-    // Unregister from selector (this will close the fd)
-    printf("DEBUG: About to unregister fd=%d\n", fd);
     selector_unregister(key->s, fd);
-    
-    printf("DEBUG: socksv5_done completed\n");
 }
 
 static void
 socksv5_close(struct selector_key *key) {
-    // This is called by selector_destroy during cleanup
-    printf("DEBUG: socksv5_close called for fd=%d\n", key->fd);
-    
     struct socks5 *s = ATTACHMENT(key);
     
     if (s != NULL) {
-        // Close any FDs that might still be open
         if (s->client_fd != -1) {
             close(s->client_fd);
             s->client_fd = -1;
@@ -476,23 +441,17 @@ socksv5_close(struct selector_key *key) {
             s->origin_fd = -1;
         }
         
-        // Free the socks5 struct
         free(s);
-        printf("DEBUG: socksv5_close freed socks5 struct\n");
     }
 }
+
 static void
 socksv5_read(struct selector_key *key) {
     struct state_machine *stm = &ATTACHMENT(key)->stm;
     
-    printf("DEBUG: socksv5_read called, current state=%u\n", stm->current);
-    
     const enum socks_v5state st = stm_handler_read(stm, key);
     
-    printf("DEBUG: stm_handler_read returned state=%u\n", st);
-    
     if (ERROR == st || DONE == st) {
-        printf("DEBUG: Terminal state reached in read, calling socksv5_done\n");
         socksv5_done(key);
     }
 }
@@ -501,14 +460,9 @@ static void
 socksv5_write(struct selector_key *key) {
     struct state_machine *stm = &ATTACHMENT(key)->stm;
     
-    printf("DEBUG: socksv5_write called, current state=%u\n", stm->current);
-    
     const enum socks_v5state st = stm_handler_write(stm, key);
     
-    printf("DEBUG: stm_handler_write returned state=%u\n", st);
-    
     if (ERROR == st || DONE == st) {
-        printf("DEBUG: Terminal state reached, calling socksv5_done\n");
         socksv5_done(key);
     }
 }
