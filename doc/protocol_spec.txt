@@ -1,0 +1,315 @@
+PROTOCOLO DE CONFIGURACIÓN Y MONITOREO - ESPECIFICACIÓN TÉCNICA
+================================================================
+
+1. DESCRIPCIÓN GENERAL
+
+El protocolo de configuración y monitoreo es un protocolo de texto plano basado en 
+TCP que permite administrar y monitorear el servidor SOCKS5 en tiempo de ejecución.
+
+- Puerto por defecto: 8080
+- Dirección por defecto: 127.0.0.1 (solo localhost)
+- Protocolo: Texto plano, líneas terminadas en \n
+- Codificación: ASCII/UTF-8
+- Autenticación: Sin autenticación (se recomienda usar solo en localhost)
+
+
+2. FORMATO DE MENSAJES
+
+2.1. Comandos del Cliente
+
+Formato: <COMANDO> [<ARGUMENTO1>] [<ARGUMENTO2>] ...\n
+
+Los comandos son case-insensitive pero por convención se envían en mayúsculas.
+Cada comando debe terminar con un salto de línea (\n).
+
+2.2. Respuestas del Servidor
+
+Las respuestas son texto plano, pueden ser multi-línea, y terminan cuando el 
+servidor cierra la conexión o deja de enviar datos.
+
+Formato de respuestas exitosas:
+- Comandos de consulta: datos en formato key=value o texto formateado
+- Comandos de modificación: "OK <mensaje>\n"
+
+Formato de respuestas de error:
+"ERR <mensaje de error>\n"
+
+
+3. COMANDOS IMPLEMENTADOS
+
+3.1. STATS - Obtener Estadísticas del Servidor
+
+Sintaxis: STATS\n
+
+Descripción: Retorna métricas completas del servidor incluyendo tiempo de actividad,
+conexiones, transferencia de datos y autenticación.
+
+Respuesta exitosa:
+=== SOCKS5 PROXY METRICS ===
+
+Server Status:
+  uptime=<días>d <horas>h <minutos>m <segundos>s
+
+Connections:
+  total=<número>
+  current=<número>
+  max_concurrent=<número>
+  failed=<número>
+
+Data Transfer:
+  bytes_sent=<número>
+  bytes_received=<número>
+  bytes_total=<número>
+
+Authentication:
+  success=<número>
+  failed=<número>
+
+Ejemplo:
+> STATS
+=== SOCKS5 PROXY METRICS ===
+Server Status:
+  uptime=0d 2h 15m 42s
+Connections:
+  total=142
+  current=5
+  max_concurrent=23
+  failed=3
+...
+
+
+3.2. USERS - Obtener Cantidad de Usuarios
+
+Sintaxis: USERS\n
+
+Descripción: Retorna el número total de usuarios registrados en el sistema.
+
+Respuesta exitosa:
+users.count=<número>\n
+
+Ejemplo:
+> USERS
+users.count=3
+
+
+3.3. LISTUSERS - Listar Todos los Usuarios
+
+Sintaxis: LISTUSERS\n
+
+Descripción: Retorna la cantidad de usuarios y sus nombres de usuario (sin contraseñas).
+
+Respuesta exitosa:
+users.count=<número>\n
+<username1>\n
+<username2>\n
+...
+
+Ejemplo:
+> LISTUSERS
+users.count=3
+admin
+alice
+bob
+
+
+3.4. ADDUSER - Agregar o Actualizar Usuario
+
+Sintaxis: ADDUSER <username> <password>\n
+
+Parámetros:
+- username: Nombre de usuario (máximo 255 caracteres, sin espacios)
+- password: Contraseña (máximo 255 caracteres, sin espacios)
+
+Descripción: Agrega un nuevo usuario al sistema o actualiza la contraseña si ya existe.
+El usuario estará disponible inmediatamente para autenticación SOCKS5.
+
+Respuesta exitosa:
+OK user added/updated\n
+
+Respuesta de error:
+ERR failed to add user (limit reached?)\n
+ERR invalid format (use: ADDUSER username password)\n
+
+Limitaciones:
+- Máximo 10 usuarios en total
+- El usuario se pierde al reiniciar el servidor (no se persiste)
+
+Ejemplo:
+> ADDUSER alice secretpass
+OK user added/updated
+
+
+3.5. DELUSER - Eliminar Usuario
+
+Sintaxis: DELUSER <username>\n
+
+Parámetros:
+- username: Nombre de usuario a eliminar
+
+Descripción: Elimina un usuario del sistema. Las conexiones activas de ese usuario
+no se cierran, pero no podrá autenticarse nuevamente.
+
+Respuesta exitosa:
+OK user deleted\n
+
+Respuesta de error:
+ERR user not found\n
+ERR invalid format (use: DELUSER username)\n
+
+Ejemplo:
+> DELUSER alice
+OK user deleted
+
+
+3.6. CREDS - Obtener Estadísticas de Credenciales Capturadas
+
+Sintaxis: CREDS\n
+
+Descripción: Retorna el número de credenciales capturadas por el dissector y su
+estado de habilitación.
+
+Respuesta exitosa:
+credentials.captured=<número>\n
+credentials.enabled=<true|false>\n
+
+Ejemplo:
+> CREDS
+credentials.captured=5
+credentials.enabled=true
+
+Nota: El dissector puede deshabilitarse con el flag -N al iniciar el servidor.
+
+
+3.7. HELP - Mostrar Ayuda
+
+Sintaxis: HELP\n
+
+Descripción: Muestra la lista de comandos disponibles con breve descripción.
+
+Respuesta exitosa:
+Available commands:
+  STATS - Show server statistics
+  USERS - Show user count
+  LISTUSERS - List all usernames
+  ADDUSER <user> <pass> - Add/update user
+  DELUSER <user> - Delete user
+  CREDS - Show credential capture stats
+  HELP  - Show this help
+  QUIT  - Close connection
+
+Ejemplo:
+> HELP
+Available commands:
+...
+
+
+3.8. QUIT - Cerrar Conexión
+
+Sintaxis: QUIT\n
+
+Descripción: Cierra la conexión con el servidor de administración de forma ordenada.
+
+Respuesta: El servidor cierra la conexión (EOF).
+
+Ejemplo:
+> QUIT
+(conexión cerrada)
+
+
+4. CLIENTE DE ADMINISTRACIÓN
+
+4.1. Argumentos de Línea de Comandos
+
+El cliente de administración soporta los siguientes argumentos:
+
+-h               Imprime ayuda y termina
+-L <addr>        Dirección del servidor de administración (default: 127.0.0.1)
+-P <port>        Puerto del servidor de administración (default: 8080)
+-i               Modo interactivo
+-c <command>     Ejecutar un comando y terminar
+
+4.2. Modo Interactivo
+
+./bin/client -i
+
+Inicia una sesión interactiva con el servidor, mostrando un prompt (>) donde
+el usuario puede escribir comandos.
+
+Ejemplo:
+$ ./bin/client -i
+Connected to management server. Type HELP for available commands, QUIT to exit.
+> STATS
+=== SOCKS5 PROXY METRICS ===
+...
+> ADDUSER test pass123
+OK user added/updated
+> QUIT
+Disconnecting...
+
+4.3. Modo Comando Único
+
+./bin/client -c <comando>
+
+Ejecuta un solo comando y termina, ideal para scripts y automatización.
+
+Ejemplos:
+$ ./bin/client -c STATS
+$ ./bin/client -c "ADDUSER bob secret"
+$ ./bin/client -c LISTUSERS
+
+
+5. EJEMPLOS DE USO
+
+5.1. Monitoreo Continuo
+
+# Obtener estadísticas cada 5 segundos
+while true; do
+  ./bin/client -c STATS
+  sleep 5
+done
+
+5.2. Gestión de Usuarios desde Script
+
+#!/bin/bash
+# Agregar usuarios desde un archivo
+while IFS=: read -r user pass; do
+  ./bin/client -c "ADDUSER $user $pass"
+done < users.txt
+
+5.3. Verificar Estado del Servidor
+
+# Script para verificar si el servidor está activo
+if ./bin/client -c STATS >/dev/null 2>&1; then
+  echo "Server is running"
+else
+  echo "Server is down"
+fi
+
+
+6. CONSIDERACIONES DE SEGURIDAD
+
+6.1. Sin Autenticación
+El protocolo NO implementa autenticación. Se recomienda:
+- Usar solo en localhost (127.0.0.1)
+- Usar firewall para bloquear acceso externo al puerto de administración
+- No exponer el puerto de administración a redes no confiables
+
+6.2. Contraseñas en Texto Plano
+Las contraseñas se transmiten en texto plano. En producción:
+- Usar solo sobre localhost o VPN
+- Considerar usar SSH tunneling para acceso remoto
+- No usar sobre redes públicas
+
+6.3. Límite de Conexiones
+No hay límite de conexiones concurrentes al servidor de administración.
+Un atacante podría agotar descriptores de archivo.
+
+
+7. LIMITACIONES
+
+- Máximo 10 usuarios concurrentes
+- Los usuarios no se persisten entre reinicios
+- Sin autenticación para el protocolo de administración
+- Sin cifrado de comunicación
+- Sin paginación para LISTUSERS (podría ser muy largo si hay muchos usuarios)
+- Sin validación de complejidad de contraseñas
