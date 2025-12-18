@@ -7,11 +7,11 @@
 
 // https://datatracker.ietf.org/doc/html/rfc1928#:~:text=VER
 enum hello_state {
-    hello_version,
-    hello_nmethods,
-    hello_methods,
-    hello_done,
-    hello_error,
+    HELLO_VERSION,
+    HELLO_NMETHODS,
+    HELLO_METHODS,
+    HELLO_DONE,
+    HELLO_ERROR,
 };
 
 struct hello_parser {

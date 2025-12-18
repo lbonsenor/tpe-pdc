@@ -3,7 +3,7 @@
 #include "hello.h"
 
 void hello_parser_init(struct hello_parser *p) {
-    p->state = hello_version;
+    p->state = HELLO_VERSION;
     memset(p, 0, sizeof(*p));
 }
 
@@ -14,26 +14,26 @@ enum hello_state hello_consume(buffer *b, struct hello_parser *p, bool *errored)
         uint8_t c = buffer_read(b);
         
         switch (state) {
-            case hello_version:
+            case HELLO_VERSION:
                 if (c == 0x05) {  // SOCKS version 5
-                    state = hello_nmethods;
+                    state = HELLO_NMETHODS;
                 } else {
-                    state = hello_error;
+                    state = HELLO_ERROR;
                     *errored = true;
                 }
                 break;
                 
-            case hello_nmethods:
+            case HELLO_NMETHODS:
                 p->remaining = c;  // Number of methods
                 if (p->remaining > 0) {
-                    state = hello_methods;
+                    state = HELLO_METHODS;
                 } else {
-                    state = hello_error;
+                    state = HELLO_ERROR;
                     *errored = true;
                 }
                 break;
                 
-            case hello_methods:
+            case HELLO_METHODS:
                 // Store the method (we just need to know if NO_AUTH is present)
                 if (c == 0x00) {  // NO_AUTH
                     p->method = 0x00;
@@ -41,12 +41,12 @@ enum hello_state hello_consume(buffer *b, struct hello_parser *p, bool *errored)
                 p->remaining--;
                 
                 if (p->remaining == 0) {
-                    state = hello_done;
+                    state = HELLO_DONE;
                 }
                 break;
                 
-            case hello_done:
-            case hello_error:
+            case HELLO_DONE:
+            case HELLO_ERROR:
                 // Terminal states
                 break;
         }
@@ -62,7 +62,7 @@ enum hello_state hello_consume(buffer *b, struct hello_parser *p, bool *errored)
 }
 
 bool hello_is_done(enum hello_state state, bool *errored) {
-    return state == hello_done || state == hello_error || (errored && *errored);
+    return state == HELLO_DONE || state == HELLO_ERROR || (errored && *errored);
 }
 
 int hello_marshall(buffer *b, uint8_t method) {
