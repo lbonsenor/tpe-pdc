@@ -618,6 +618,14 @@ request_read(struct selector_key *key) {
 static unsigned
 request_process(struct selector_key *key) {
     struct request_st *d = &ATTACHMENT(key)->client.request;
+
+    fprintf(stderr,
+        "[REQ] version=%u cmd=%u atyp=%u port=%u\n",
+        d->parser.version,
+        d->parser.cmd,
+        d->parser.atyp,
+        d->parser.dest_port);
+
     unsigned ret;
     
     if (d->parser.version != 5) {
@@ -633,10 +641,9 @@ request_process(struct selector_key *key) {
     switch (d->parser.atyp) {
         case SOCKS_ATYP_IPV4:
         case SOCKS_ATYP_IPV6:
-            ret = REQUEST_CONNECTING;
-            break;
         case SOCKS_ATYP_DOMAIN:
-            ret = REQUEST_RESOLVE;
+            selector_set_interest_key(key, OP_WRITE);
+            ret = REQUEST_CONNECTING;
             break;
         default:
             d->reply = SOCKS_REPLY_ADDRESS_TYPE_NOT_SUPPORTED;
@@ -658,6 +665,7 @@ request_read_close(const unsigned state, struct selector_key *key) {
 
 static unsigned
 request_resolve_done(struct selector_key *key) {
+    fprintf(stderr, "[RESOLVE_DONE] called\n");
     struct request_st *d = &ATTACHMENT(key)->client.request;
     struct socks5 *s = ATTACHMENT(key);
     
@@ -675,12 +683,16 @@ request_resolve_done(struct selector_key *key) {
 
 static void
 connecting_init(const unsigned state, struct selector_key *key) {
+    fprintf(stderr, "[CONNECT_INIT] fd=%d atyp=%u\n", key->fd, ATTACHMENT(key)->client.request.parser.atyp);
+    
     (void)state;
     struct connecting *d = &ATTACHMENT(key)->orig.conn;
     struct request_st *req = &ATTACHMENT(key)->client.request;
     struct socks5 *s = ATTACHMENT(key);
     
     d->fd = &s->origin_fd;
+
+    selector_set_interest(key->s, s->client_fd, OP_NOOP);
     
     if (req->parser.atyp == SOCKS_ATYP_DOMAIN) {
         struct addrinfo hints = {
@@ -694,6 +706,8 @@ connecting_init(const unsigned state, struct selector_key *key) {
         snprintf(port_str, sizeof(port_str), "%d", req->parser.dest_port);
         
         int ret = getaddrinfo(req->parser.dest_addr.domain, port_str, &hints, &s->origin_resolution);
+
+        fprintf(stderr, "[CONNECT_INIT] getaddrinfo ret=%d res=%p\n", ret, (void *)s->origin_resolution);
         
         if (ret != 0 || s->origin_resolution == NULL) {
             req->reply = SOCKS_REPLY_HOST_UNREACHABLE;
@@ -789,6 +803,7 @@ request_connecting(struct selector_key *key) {
                                  d->current_addr->ai_addrlen);
         
         if (connect_ret == 0 || (connect_ret == -1 && errno == EISCONN)) {
+            fprintf(stderr, "[CONNECTING] connected OK\n");
             req->reply = SOCKS_REPLY_SUCCEEDED;
             ret = REQUEST_WRITE;
             // Connection succeeded, change origin interest to NOOP
@@ -821,6 +836,7 @@ request_connecting(struct selector_key *key) {
 static unsigned
 request_write(struct selector_key *key) {
     struct request_st *d = &ATTACHMENT(key)->client.request;
+    fprintf(stderr, "[REQUEST_WRITE] reply=%u\n", d->reply);
     unsigned ret = REQUEST_WRITE;
     
     buffer *b = d->wb;

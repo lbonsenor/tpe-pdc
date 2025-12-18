@@ -10,6 +10,7 @@
  * DNS utilizando getaddrinfo), pero toda esa complejidad está oculta en
  * el selector.
  */
+#define _POSIX_C_SOURCE 200112L
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -23,13 +24,20 @@
 #include <sys/socket.h>  // socket
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <netdb.h>
 
+#include "include/args.h"
 #include "include/socks5.h"
 #include "include/selector.h"
 #include "include/socks5nio.h"
 #include "include/users.h"
 
 static bool done = false;
+static struct socks5args args;
+
+// metricas
+static size_t mng_total_connections = 0;
+static size_t mng_current_connections = 0;
 
 static void
 sigterm_handler(const int signal) {
@@ -37,45 +45,26 @@ sigterm_handler(const int signal) {
     done = true;
 }
 
-static void cleanup(fd_selector selector, int server_fd) {
-    if (server_fd != -1) {
-        close(server_fd);
-    }
+static void cleanup(fd_selector selector, int server_fd, int mng_fd) {
+    if (server_fd != -1) close(server_fd);
+    if (mng_fd != -1) close(mng_fd);
     
     if (selector != NULL) {
         selector_destroy(selector);  // This should free all resources
     }
 
     users_destroy();
-
     socksv5_pool_destroy();
 }
 
-int main(const int argc, char **argv) {
-    selector_status err;
-    
-    unsigned port = 1080;
-
-    if(argc == 1) {
-        // utilizamos el default
-    } else if(argc == 2) {
-        char *end     = 0;
-        const long sl = strtol(argv[1], &end, 10);
-
-        if (end == argv[1]|| '\0' != *end 
-           || ((LONG_MIN == sl || LONG_MAX == sl) && ERANGE == errno)
-           || sl < 0 || sl > USHRT_MAX) {
-            fprintf(stderr, "port should be an integer: %s\n", argv[1]);
-            return 1;
-        }
-        port = sl;
-    } else {
-        fprintf(stderr, "Usage: %s <port>\n", argv[0]);
-        return 1;
-    }
-
+static void users_setup() {
     users_init();
 
+    for (size_t i = 0; i < args.users_count; i++)
+    {
+        users_add(args.users[i].name, args.users[i].pass);
+    }
+    
     size_t user_count = users_count();
     printf("[INFO] Usuarios configurados: %zu\n", user_count);
     
@@ -85,18 +74,133 @@ int main(const int argc, char **argv) {
         printf("[WARNING] Autenticación DESHABILITADA (método 0x00)\n");
     }
 
+}
+
+static int listener_setup(const char *addr, unsigned short port) {
+    struct addrinfo hints, *res = NULL, *rp;
+    int fd = -1;
+
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family   = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+    hints.ai_flags    = AI_PASSIVE;
+
+    char port_str[6];
+    snprintf(port_str, sizeof(port_str), "%u", port);
+
+    int rc = getaddrinfo(addr, port_str, &hints, &res);
+    if (rc != 0) {
+        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rc));
+        return -1;
+    }
+
+    for (rp = res; rp != NULL; rp = rp->ai_next) {
+        fd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (fd < 0) continue;
+
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int));
+
+        if (bind(fd, rp->ai_addr, rp->ai_addrlen) == 0) break;
+
+        close(fd);
+        fd = -1;
+    }
+
+    freeaddrinfo(res);
+
+    if (fd < 0) return -1;
+
+    if (listen(fd, 20) < 0) {
+        close(fd);
+        return -1;
+    }
+
+    if (selector_fd_set_nio(fd) == -1) {
+        close(fd);
+        return -1;
+    }
+
+    return fd;
+}
+
+struct mng_conn {
+    size_t bytes;
+};
+
+static void mng_read(struct selector_key *key);
+
+static void mng_close(struct selector_key *key) {
+    mng_current_connections--;
+    free(key->data);
+}
+
+static void mng_passive_accept(struct selector_key *key) {
+    struct sockaddr_storage addr;
+    socklen_t len = sizeof(addr);
+
+    int client = accept(key->fd, (struct sockaddr *)&addr, &len);
+    if (client < 0) return;
+
+    if (selector_fd_set_nio(client) == -1) {
+        close(client);
+        return;
+    }
+
+    struct mng_conn *conn = calloc(1, sizeof(*conn));
+    if (conn == NULL) {
+        close(client);
+        return;
+    }
+
+    mng_total_connections++;
+    mng_current_connections++;
+
+    const struct fd_handler handler = {
+        .handle_read  = mng_read,
+        .handle_write = NULL,
+        .handle_close = mng_close,
+    };
+
+    selector_register(key->s, client, &handler, OP_READ, conn);
+}
+
+static void mng_read(struct selector_key *key) {
+    char buf[256];
+    ssize_t n = recv(key->fd, buf, sizeof(buf) - 1, 0);
+
+    if (n <= 0) {
+        selector_unregister(key->s, key->fd);
+        return;
+    }
+
+    buf[n] = 0;
+
+    if (strncmp(buf, "STATS", 5) == 0) {
+        char reply[256];
+        int len = snprintf(reply, sizeof(reply),
+            "connections.total=%zu\n"
+            "connections.current=%zu\n",
+            mng_total_connections,
+            mng_current_connections);
+
+        send(key->fd, reply, len, MSG_NOSIGNAL);
+    } else if (strncmp(buf, "QUIT", 4) == 0) {
+        selector_unregister(key->s, key->fd);
+    } else {
+        const char *err = "ERR unknown command\n";
+        send(key->fd, err, strlen(err), MSG_NOSIGNAL);
+    }
+}
+
+int main(const int argc, char **argv) {
+    parse_args(argc, argv, &args);
+    printf("Starting server...\n");
+    
+    users_setup();
+    
     // no tenemos nada que leer de stdin
-    close(0);
-
-    const char       *err_msg = NULL;
-    selector_status   ss      = SELECTOR_SUCCESS;
-    fd_selector selector      = NULL;
-
-    struct sockaddr_in addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sin_family      = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    addr.sin_port        = htons(port);
+    // close(0);
 
     const struct selector_init conf = {
         .signal = SIGALRM,
@@ -107,95 +211,57 @@ int main(const int argc, char **argv) {
     };
 
     if(0 != selector_init(&conf)) {
-        err_msg = "initializing selector";
-        goto finally;
+        perror("selector_init");
+        return 1;
     }
 
-    selector = selector_new(1024);
-
-    if(selector == NULL) {
-        err_msg = "unable to create selector";
-        goto finally;
+    fd_selector selector = selector_new(1024);
+    if(selector == NULL) 
+    {
+        perror("selector_new");
+        return 1;
     }
 
-    const int server = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    int socks_fd = listener_setup(args.socks_addr, args.socks_port);
+    int mng_fd   = listener_setup(args.mng_addr, args.mng_port);
 
-    fprintf(stdout, "Listening on TCP port %d\n", port);
+    if (socks_fd < 0 || mng_fd < 0)
+    {
+        perror("listener_setup");
+        cleanup(selector, socks_fd, mng_fd);
+        return 1;
+    }
+    
+    printf("SOCKS listening on %s:%u\n", args.socks_addr, args.socks_port);
+    printf("MNG   listening on %s:%u\n", args.mng_addr,   args.mng_port);
     fflush(stdout);  // KEEP THIS ONE - ensures message shows before blocking
 
-    if(server < 0) {
-        perror("socket");
-        err_msg = "unable to create socket";
-        goto finally;
-    }
-
     // man 7 ip. no importa reportar nada si falla.
-    setsockopt(server, SOL_SOCKET, SO_REUSEADDR, &(int){ 1 }, sizeof(int));
-
-    if(bind(server, (struct sockaddr*) &addr, sizeof(addr)) < 0) {
-        err_msg = "unable to bind socket";
-        goto finally;
-    }
-
-    if (listen(server, 20) < 0) {
-        perror("listen");
-        err_msg = "unable to listen";
-        goto finally;
-    }
+    // setsockopt(socks_server, SOL_SOCKET, SO_REUSEADDR, &(int){ 1 }, sizeof(int));
 
     // registrar sigterm es útil para terminar el programa normalmente.
     // esto ayuda mucho en herramientas como valgrind.
     signal(SIGTERM, sigterm_handler);
     signal(SIGINT,  sigterm_handler);
 
-    if(selector_fd_set_nio(server) == -1) {
-        err_msg = "getting server socket flags";
-        goto finally;
-    }
-
-    const struct fd_handler socksv5 = {
-        .handle_read       = socksv5_passive_accept,
-        .handle_write      = NULL,
-        .handle_close      = NULL, // nada que liberar
+    const struct fd_handler socks_handler = {
+        .handle_read = socksv5_passive_accept
     };
 
-    ss = selector_register(selector, server, &socksv5, OP_READ, NULL);
+    const struct fd_handler mng_handler = {
+        .handle_read = mng_passive_accept
+    };
 
-    if(ss != SELECTOR_SUCCESS) {
-        err_msg = "registering fd";
-        goto finally;
-    }
+    selector_register(selector, socks_fd, &socks_handler, OP_READ, NULL);
+    selector_register(selector, mng_fd, &mng_handler, OP_READ, NULL);
     
-    while(!done) {
-        err = selector_select(selector);
-        
-        if(err != SELECTOR_SUCCESS) {
-            if (errno == EINTR) {
-                continue;
-            }
-            fprintf(stderr, "selector_select error: %s (errno=%d)\n", 
-                    selector_error(selector), errno);
+    while (!done) {
+        if (selector_select(selector) != SELECTOR_SUCCESS) {
+            if (errno == EINTR) continue;
             break;
         }
     }
     
-    if(err_msg == NULL) {
-        err_msg = "closing";
-    }
-
-    int ret = 0;
-finally:
-    if(ss != SELECTOR_SUCCESS) {
-        fprintf(stderr, "%s: %s\n", (err_msg == NULL) ? "": err_msg,
-                                  ss == SELECTOR_IO
-                                      ? strerror(errno)
-                                      : selector_error(selector));
-        ret = 2;
-    } else if(err_msg) {
-        perror(err_msg);
-        ret = 1;
-    }
-    cleanup(selector, server);
-
-    return ret;
+    cleanup(selector, socks_fd, mng_fd);
+    return 0;
 }

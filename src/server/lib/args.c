@@ -57,12 +57,12 @@ usage(const char* progname)
             "Usage: %s [OPTION]...\n"
             "\n"
             "   -h               Imprime la ayuda y termina.\n"
-            "   -l <SOCKS addr>  DirecciÃ³n donde servirÃ¡ el proxy SOCKS.\n"
-            "   -L <conf  addr>  DirecciÃ³n donde servirÃ¡ el servicio de management.\n"
+            "   -l <SOCKS addr>  Dirección donde servirá el proxy SOCKS.\n"
+            "   -L <conf  addr>  Dirección donde servirá el servicio de management.\n"
             "   -p <SOCKS port>  Puerto entrante conexiones SOCKS.\n"
             "   -P <conf port>   Puerto entrante conexiones configuracion\n"
-            "   -u <name>:<pass> Usuario y contraseÃ±a de usuario que puede usar el proxy. Hasta 10.\n"
-            "   -v               Imprime informaciÃ³n sobre la versiÃ³n versiÃ³n y termina.\n"
+            "   -u <name>:<pass> Usuario y contraseña de usuario que puede usar el proxy. Hasta 10.\n"
+            "   -v               Imprime información sobre la versión versión y termina.\n"
 
             "\n",
             progname);
@@ -146,4 +146,5 @@ parse_args(const int argc, char** argv, struct socks5args* args)
         fprintf(stderr, "\n");
         exit(1);
     }
+    args->users_count = nusers;
 }

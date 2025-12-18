@@ -1,6 +1,6 @@
 #include "users.h"
 
-#define _POSIX_C_SOURCE 200809L // fixes pthread_rwlock_t
+#define _POSIX_C_SOURCE 200112L // fixes pthread_rwlock_t
 #include <pthread.h>
 #include <string.h>
 #include <stdlib.h>
