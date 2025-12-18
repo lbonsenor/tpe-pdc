@@ -82,6 +82,12 @@ parse_args(const int argc, char** argv, struct socks5args* args)
 
     args->disectors_enabled = true;
 
+    // Show help hint if no arguments provided
+    if (argc == 1)
+    {
+        fprintf(stderr, "Try '%s -h' for more information.\n", argv[0]);
+    }
+
     int c;
     int nusers = 0;
 
