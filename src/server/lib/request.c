@@ -98,6 +98,7 @@ enum request_state request_consume(buffer *b, struct request_parser *p, bool *er
                         *error = true;
                         break;
                 }
+                break;
             
                 case REQUEST_DSTADDR_IPV4:
                     p->dest_addr.ipv4[p->addr_bytes_read++] = *ptr;
@@ -147,13 +148,13 @@ enum request_state request_consume(buffer *b, struct request_parser *p, bool *er
                             p->dest_addr.domain[p->domain_bytes_read] = '\0';
                             p->port_bytes_read = 0;
                             p->state = REQUEST_DSTPORT;
-                        } else
-                        {
-                            p->state = REQUEST_ERROR;
-                            *error = true;
                         }
-                        break;
+                    } else
+                    {
+                        p->state = REQUEST_ERROR;
+                        *error = true;
                     }
+                    break;
 
                 case REQUEST_DSTPORT:
                     if (p->port_bytes_read == 0)
@@ -218,6 +219,12 @@ int request_marshall(buffer *b, enum socks_reply reply)
 bool is_request_done(enum request_state state, bool *error)
 {
     return state == REQUEST_DONE || state == REQUEST_ERROR;
+}
+
+void request_parser_close(struct request_parser *p)
+{
+    // Nothing to free currently
+    (void)p;
 }
 
 

@@ -200,6 +200,29 @@ selector_unregister(fd_selector s, const int fd) {
     item->data = NULL;
 }
 
+selector_status selector_set_interest(fd_selector s, int fd, fd_interest interest) {
+    if (s == NULL || fd < 0 || fd >= (int)s->max_fds) {
+        return SELECTOR_IARGS;
+    }
+    
+    struct epoll_event event;
+    event.events = 0;
+    event.data.ptr = &s->fds[fd];
+    
+    if (interest & OP_READ) {
+        event.events |= EPOLLIN;
+    }
+    if (interest & OP_WRITE) {
+        event.events |= EPOLLOUT;
+    }
+    
+    if (epoll_ctl(s->epoll_fd, EPOLL_CTL_MOD, fd, &event) < 0) {
+        return SELECTOR_IO;
+    }
+    
+    return SELECTOR_SUCCESS;
+}
+
 selector_status selector_set_interest_key(struct selector_key *key, fd_interest interest) {
     if (key == NULL || key->s == NULL) {
         return SELECTOR_IARGS;

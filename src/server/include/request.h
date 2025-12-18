@@ -64,7 +64,7 @@ struct request_parser
     {
         uint8_t ipv4[4];
         uint8_t ipv6[16];
-        char domain[256]
+        char domain[256];
     } dest_addr;
     
     // para fqdn
