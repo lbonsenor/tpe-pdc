@@ -31,6 +31,7 @@
 #include "include/selector.h"
 #include "include/socks5nio.h"
 #include "include/users.h"
+#include "include/logger.h"
 
 static bool done = false;
 static struct socks5args args;
@@ -41,7 +42,7 @@ static size_t mng_current_connections = 0;
 
 static void
 sigterm_handler(const int signal) {
-    printf("signal %d, cleaning up and exiting\n",signal);
+    LOGI("signal %d received, cleaning up and exiting", signal);
     done = true;
 }
 
@@ -66,12 +67,12 @@ static void users_setup() {
     }
     
     size_t user_count = users_count();
-    printf("[INFO] Usuarios configurados: %zu\n", user_count);
+    LOGI("Usuarios configurados: %zu", user_count);
     
     if (user_count > 0) {
-        printf("[INFO] Autenticación REQUERIDA (método 0x02)\n");
+        LOGI("Autenticación REQUERIDA (método 0x02)");
     } else {
-        printf("[WARNING] Autenticación DESHABILITADA (método 0x00)\n");
+        LOGW("Autenticación DESHABILITADA (método 0x00)");
     }
 
 }
@@ -91,7 +92,10 @@ static int listener_setup(const char *addr, unsigned short port) {
 
     int rc = getaddrinfo(addr, port_str, &hints, &res);
     if (rc != 0) {
-        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rc));
+        LOGE("getaddrinfo(%s:%u) failed: %s",
+            addr ? addr : "NULL",
+            port,
+            gai_strerror(rc));
         return -1;
     }
 
@@ -194,8 +198,9 @@ static void mng_read(struct selector_key *key) {
 }
 
 int main(const int argc, char **argv) {
+    logger_init(LOG_DEBUG);
     parse_args(argc, argv, &args);
-    printf("Starting server...\n");
+    LOGI("Starting SOCKS5 server");
     
     users_setup();
     
@@ -211,14 +216,14 @@ int main(const int argc, char **argv) {
     };
 
     if(0 != selector_init(&conf)) {
-        perror("selector_init");
+        LOGE("selector_init failed: %s", strerror(errno));
         return 1;
     }
 
     fd_selector selector = selector_new(1024);
     if(selector == NULL) 
     {
-        perror("selector_new");
+        LOGE("selector_new failed");
         return 1;
     }
 
@@ -227,13 +232,13 @@ int main(const int argc, char **argv) {
 
     if (socks_fd < 0 || mng_fd < 0)
     {
-        perror("listener_setup");
+        LOGE("listener_setup failed");
         cleanup(selector, socks_fd, mng_fd);
         return 1;
     }
     
-    printf("SOCKS listening on %s:%u\n", args.socks_addr, args.socks_port);
-    printf("MNG   listening on %s:%u\n", args.mng_addr,   args.mng_port);
+    LOGI("SOCKS listening on %s:%u", args.socks_addr, args.socks_port);
+    LOGI("MNG   listening on %s:%u", args.mng_addr,   args.mng_port);
     fflush(stdout);  // KEEP THIS ONE - ensures message shows before blocking
 
     // man 7 ip. no importa reportar nada si falla.
