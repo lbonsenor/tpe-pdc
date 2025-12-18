@@ -191,6 +191,16 @@ static void mng_read(struct selector_key *key) {
     }
 
     buf[n] = 0;
+    
+    // Strip trailing newline/whitespace
+    while (n > 0 && (buf[n-1] == '\n' || buf[n-1] == '\r' || buf[n-1] == ' ')) {
+        buf[--n] = 0;
+    }
+    
+    // Ignore empty commands
+    if (n == 0) {
+        return;
+    }
 
     if (strncmp(buf, "STATS", 5) == 0) {
         char reply[1024];

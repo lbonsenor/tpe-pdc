@@ -305,8 +305,7 @@ static void command_mode(int sock, const char *cmd) {
         exit(1);
     }
     
-    // Send QUIT
-    send_command(sock, "QUIT");
+    // Connection will be closed by caller - no need to send QUIT
 }
 
 int main(int argc, char **argv) {
