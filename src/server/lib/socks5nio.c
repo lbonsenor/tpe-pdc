@@ -26,11 +26,19 @@
 #include "socks5nio.h"
 #include "netutils.h"
 #include "users.h"
+#include "socks5.h"
 
 #define BUFFER_SIZE 8192
 
 #define N(x) (sizeof(x)/sizeof((x)[0]))
 
+// Estructura para pasar argumentos al hilo de resolución DNS
+struct selector_resolution_args {
+    char host[256];      // Copia del FQDN
+    char service[16];    // Puerto como string
+    int fd;              // File descriptor del cliente (para notificar al selector)
+    fd_selector s;       // Puntero al selector principal
+};
 
 /** maquina de estados general */
 enum socks_v5state {
@@ -156,93 +164,6 @@ enum socks_v5state {
     ERROR,
 };
 
-////////////////////////////////////////////////////////////////////
-// Definición de variables para cada estado
-
-/** usado por HELLO_READ, HELLO_WRITE */
-struct hello_st {
-    /** buffer utilizado para I/O */
-    buffer               *rb, *wb;
-    struct hello_parser   parser;
-    /** el método de autenticación seleccionado */
-    uint8_t               method;
-} ;
-
-struct request_st {
-    buffer                 *rb, *wb;
-    struct request_parser   parser;     
-    enum socks_reply        reply;      
-    
-    struct addrinfo        *current_addr;  
-};
-
-struct auth_st
-{
-    buffer                  *rb, *wb;
-    struct auth_parser      parser;
-    enum auth_status        status;
-};
-
-struct connecting {
-    int             *fd;
-    struct addrinfo *current_addr;
-};
-
-struct copy {
-    int     *fd;
-    buffer  *rb, *wb;
-
-    int     duplex;
-
-    struct copy *other;
-};
-
-enum copy_duplex {
-    DUPLEX_READ = 1 << 0,
-    DUPLEX_WRITE = 1 << 1,
-};
-
-/*
- * Si bien cada estado tiene su propio struct que le da un alcance
- * acotado, disponemos de la siguiente estructura para hacer una única
- * alocación cuando recibimos la conexión.
- *
- * Se utiliza un contador de referencias (references) para saber cuando debemos
- * liberarlo finalmente, y un pool para reusar alocaciones previas.
- */
-struct socks5 {
-// …
-    /** maquinas de estados */
-    struct state_machine          stm;
-
-    /** estados para el client_fd */
-    union {
-        struct hello_st           hello;
-        struct request_st         request;
-        struct auth_st            auth;
-        struct copy               copy;
-    } client;
-    /** estados para el origin_fd */
-    union {
-        struct connecting         conn;
-        struct copy               copy;
-    } orig;
-
-    int                     client_fd;
-    struct sockaddr_storage client_addr;
-    socklen_t               client_addr_len;
-
-    int                     origin_fd;
-    struct addrinfo         *origin_resolution;
-
-    uint8_t                 raw_buff_a[BUFFER_SIZE];
-    uint8_t                 raw_buff_b[BUFFER_SIZE];
-    buffer                  read_buffer;
-    buffer                  write_buffer;
-
-    struct socks5           *next;
-    uint32_t                references;
-};
 
 static const uint32_t       max_pool    = 50;  // ? - Esta en minusculas, asumo que es un static const, pero no debería ser un #define?
 static uint32_t             pool_size   = 0;
@@ -268,6 +189,9 @@ static void auth_init(const unsigned state, struct selector_key *key);
 static unsigned auth_read(struct selector_key *key);
 static unsigned auth_write(struct selector_key *key);
 static void auth_read_close(const unsigned state, struct selector_key *key);
+// Prototipo de la función del hilo
+static void *resolution_thread(void *arg);
+static void request_resolve_init(const unsigned state, struct selector_key *key);
 
 /** definición de handlers para cada estado */
 static const struct state_definition client_statbl[] = {
@@ -284,8 +208,9 @@ static const struct state_definition client_statbl[] = {
         .on_departure       = request_read_close,
         .on_read_ready      = request_read,
     },{
-        .state              = REQUEST_RESOLVE,
-        .on_block_ready     = request_resolve_done,
+        .state            = REQUEST_RESOLVE,
+        .on_arrival       = request_resolve_init, // Lanza el hilo
+        .on_block_ready   = request_resolve_done, // Recibe el resultado (callback)
     },{
         .state              = REQUEST_CONNECTING,
         .on_arrival         = connecting_init,
@@ -312,6 +237,33 @@ static const struct state_definition client_statbl[] = {
         .state              = ERROR
     }
 };
+
+static void *resolution_thread(void *arg) {
+    struct selector_resolution_args *args = (struct selector_resolution_args *)arg;
+    
+    struct addrinfo hints = {
+        .ai_family   = AF_UNSPEC,    // IPv4 o IPv6
+        .ai_socktype = SOCK_STREAM,  // TCP
+        .ai_flags    = AI_PASSIVE,
+        .ai_protocol = 0,
+    };
+    struct addrinfo *result = NULL;
+
+    // Aquí ocurre la magia: getaddrinfo bloquea ESTE hilo, no el principal
+    int ret = getaddrinfo(args->host, args->service, &hints, &result);
+
+    if (ret != 0) {
+        // Falló la resolución: notificamos con NULL
+        // Asegúrate de tener selector_notify_block_with_result en tu selector.h/.c
+        selector_notify_block_with_result(args->s, args->fd, NULL);
+    } else {
+        // Éxito: pasamos la lista de direcciones resuelta
+        selector_notify_block_with_result(args->s, args->fd, result);
+    }
+
+    free(args); // Liberamos la memoria de los argumentos
+    return NULL;
+}
 
 static struct socks5 *
 socks5_new(int client_fd) {
@@ -641,14 +593,15 @@ request_process(struct selector_key *key) {
     switch (d->parser.atyp) {
         case SOCKS_ATYP_IPV4:
         case SOCKS_ATYP_IPV6:
+            // Si es IP, ya tenemos la dirección, vamos a conectar
+            d->current_addr = NULL; // Deberás manejar la creación de addrinfo para IPs raw en connecting_init
+            return REQUEST_CONNECTING;
         case SOCKS_ATYP_DOMAIN:
-            selector_set_interest_key(key, OP_WRITE);
-            ret = REQUEST_CONNECTING;
-            break;
+            // SI ES DOMINIO -> Vamos al estado de resolución asíncrona
+            return REQUEST_RESOLVE;
         default:
             d->reply = SOCKS_REPLY_ADDRESS_TYPE_NOT_SUPPORTED;
-            ret = ERROR;
-            break;
+            return ERROR;
     }
     
     return ret;
@@ -663,6 +616,65 @@ request_read_close(const unsigned state, struct selector_key *key) {
 ///////////////////////////////////////////////////////////////////////////////
 // REQUEST_RESOLVE handlers
 
+// 1. Al entrar al estado: Lanzamos el hilo
+static void request_resolve_init(const unsigned state, struct selector_key *key) {
+    (void)state;
+    struct request_st *d = &ATTACHMENT(key)->client.request;
+    
+    // Alocamos memoria para los argumentos del hilo
+    struct selector_resolution_args *args = malloc(sizeof(*args));
+    if (args == NULL) {
+        d->reply = SOCKS_REPLY_GENERAL_FAILURE;
+        // Forzamos salto a error si no hay memoria
+        selector_set_interest_key(key, OP_WRITE);
+        return; // El state machine debería manejar el error
+    }
+
+    // Copiamos los datos desde tu parser (definido en request.h)
+    strncpy(args->host, d->parser.dest_addr.domain, sizeof(args->host) - 1);
+    args->host[sizeof(args->host) - 1] = '\0';
+    
+    snprintf(args->service, sizeof(args->service), "%d", d->parser.dest_port);
+    
+    args->fd = key->fd;
+    args->s  = key->s;
+
+    pthread_t tid;
+    // Creamos el hilo en modo detached (no necesitamos hacer join)
+    if (pthread_create(&tid, NULL, resolution_thread, args) != 0) {
+        free(args);
+        d->reply = SOCKS_REPLY_GENERAL_FAILURE;
+        selector_set_interest_key(key, OP_WRITE); // Ir a enviar error
+    } else {
+        pthread_detach(tid);
+        // IMPORTANTE: Desuscribimos el interés temporalmente.
+        // El selector quedará "dormido" para este FD hasta que el hilo avise.
+        selector_set_interest_key(key, OP_NOOP);
+    }
+}
+
+// 2. Cuando el hilo termina (notificación del selector):
+static unsigned request_resolve_done(struct selector_key *key) {
+    struct request_st *d = &ATTACHMENT(key)->client.request;
+    struct socks5 *s     = ATTACHMENT(key);
+
+    // El selector modificado (el de referencia) ya inyectó el resultado en s->origin_resolution
+    // (Verifica que en tu struct socks5 tengas este campo, o agrégalo)
+    
+    if (s->origin_resolution == NULL) {
+        // El hilo retornó NULL -> Falló el DNS
+        d->reply = SOCKS_REPLY_HOST_UNREACHABLE;
+        return ERROR; 
+    }
+
+    // Éxito: Guardamos la lista de direcciones y avanzamos a conectar
+    d->current_addr = s->origin_resolution;
+    
+    // Reactivamos intereses (el estado CONNECTING se encargará de poner OP_WRITE en el origin_fd)
+    return REQUEST_CONNECTING; 
+}
+
+/*
 static unsigned
 request_resolve_done(struct selector_key *key) {
     fprintf(stderr, "[RESOLVE_DONE] called\n");
@@ -677,6 +689,7 @@ request_resolve_done(struct selector_key *key) {
     d->current_addr = s->origin_resolution;
     return REQUEST_CONNECTING;
 }
+*/
 
 ///////////////////////////////////////////////////////////////////////////////
 // REQUEST_CONNECTING handlers

@@ -110,4 +110,12 @@ const char *selector_error(fd_selector s);
 /// @param fd   File Descriptor
 void selector_invalidate_data(fd_selector s, int fd);
 
+/**
+ * Notifica al selector que un trabajo bloqueante ha terminado.
+ * @param s El selector
+ * @param fd El file descriptor asociado al trabajo (el del cliente)
+ * @param result El resultado del trabajo (en este caso, struct addrinfo *)
+ */
+selector_status selector_notify_block_with_result(fd_selector s, int fd, void *result);
+
 #endif

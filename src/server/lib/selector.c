@@ -11,6 +11,7 @@
 
 #include "../include/selector.h"
 #include "selector.h"
+#include "socks5.h"
 
 #define ERROR_DEFAULT_MSG "Something went wrong"
 #define MAX_EVENTS 64
@@ -27,6 +28,12 @@ typedef struct item
     void        *data;
 } item;
 
+struct blocking_job {
+    int fd;
+    void *data;
+    struct blocking_job *next;
+};
+
 struct fdselector {
     item        *fds;
     size_t      max_fds;
@@ -35,6 +42,8 @@ struct fdselector {
     int         event_fd;
 
     pthread_mutex_t mutex;
+
+    struct blocking_job *resolution_jobs;
 };
 
 
@@ -88,7 +97,7 @@ fd_selector selector_new(const size_t initial_elements) {
     
     struct epoll_event ev;
     ev.events = EPOLLIN;
-    ev.data.fd = s->event_fd;
+    ev.data.ptr = NULL;
     if (epoll_ctl(s->epoll_fd, EPOLL_CTL_ADD, s->event_fd, &ev) == -1)
     {
         close(s->event_fd);
@@ -267,10 +276,40 @@ int selector_fd_set_nio(int fd) {
     return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 }
 
+static void handle_block_notifications(fd_selector s) {
+    uint64_t val;
+    if (read(s->event_fd, &val, sizeof(val)) < 0) return;
+
+    pthread_mutex_lock(&s->mutex);
+    struct blocking_job *jobs = s->resolution_jobs;
+    s->resolution_jobs = NULL;
+    pthread_mutex_unlock(&s->mutex);
+
+    while (jobs != NULL) {
+        struct blocking_job *current = jobs;
+        jobs = current->next;
+        if (current->fd < (int)s->max_fds) {
+            item *i = &s->fds[current->fd];
+            if (i->handler.handle_block != NULL) {
+                // Inyectamos el resultado (addrinfo*) en tu estructura socks5
+                // Asegúrate de castear a tu estructura correcta (struct socks5 *)
+                struct socks5 *ctx = (struct socks5 *)i->data;
+                ctx->origin_resolution = (struct addrinfo *)current->data;
+
+                struct selector_key key = { .s = s, .fd = current->fd, .data = i->data };
+                i->handler.handle_block(&key);
+            }
+        }
+        free(current);
+    }
+}
+
 selector_status selector_select(fd_selector s) {
     if (s == NULL) {
         return SELECTOR_IARGS;
     }
+
+    handle_block_notifications(s);
 
     struct epoll_event events[MAX_EVENTS];
     int timeout = selector_config.select_timeout.tv_sec * 1000 + 
@@ -344,4 +383,22 @@ selector_invalidate_data(fd_selector s, int fd) {
     if (s->fds[fd].fd == fd) {
         s->fds[fd].data = NULL;
     }
+}
+
+selector_status selector_notify_block_with_result(fd_selector s, int fd, void *result) {
+    struct blocking_job *job = malloc(sizeof(struct blocking_job));
+    if (job == NULL) return SELECTOR_ENOMEM;
+    
+    job->fd = fd;
+    job->data = result;
+    job->next = NULL;
+
+    pthread_mutex_lock(&s->mutex);
+    job->next = s->resolution_jobs;
+    s->resolution_jobs = job;
+    pthread_mutex_unlock(&s->mutex);
+
+    uint64_t val = 1;
+    write(s->event_fd, &val, sizeof(val));
+    return SELECTOR_SUCCESS;
 }
