@@ -32,6 +32,9 @@
 #include "include/socks5nio.h"
 #include "include/users.h"
 #include "include/logger.h"
+#include "include/access_log.h"
+#include "include/dissector.h"
+#include "include/metrics.h"
 
 static bool done = false;
 static struct socks5args args;
@@ -47,15 +50,20 @@ sigterm_handler(const int signal) {
 }
 
 static void cleanup(fd_selector selector, int server_fd, int mng_fd) {
-    if (server_fd != -1) close(server_fd);
-    if (mng_fd != -1) close(mng_fd);
-    
+    // selector_destroy will call close handlers for all registered fds
+    // and then close them, so we don't need to close server_fd/mng_fd manually
     if (selector != NULL) {
-        selector_destroy(selector);  // This should free all resources
+        selector_destroy(selector);
+    } else {
+        // If selector wasn't created, close manually
+        if (server_fd != -1) close(server_fd);
+        if (mng_fd != -1) close(mng_fd);
     }
 
     users_destroy();
     socksv5_pool_destroy();
+    access_log_close();
+    dissector_close();
 }
 
 static void users_setup() {
@@ -136,7 +144,9 @@ static void mng_read(struct selector_key *key);
 
 static void mng_close(struct selector_key *key) {
     mng_current_connections--;
-    free(key->data);
+    if (key->data != NULL) {
+        free(key->data);
+    }
 }
 
 static void mng_passive_accept(struct selector_key *key) {
@@ -174,6 +184,8 @@ static void mng_read(struct selector_key *key) {
     ssize_t n = recv(key->fd, buf, sizeof(buf) - 1, 0);
 
     if (n <= 0) {
+        // Connection closed - clean up before unregistering
+        mng_close(key);
         selector_unregister(key->s, key->fd);
         return;
     }
@@ -181,18 +193,40 @@ static void mng_read(struct selector_key *key) {
     buf[n] = 0;
 
     if (strncmp(buf, "STATS", 5) == 0) {
-        char reply[256];
-        int len = snprintf(reply, sizeof(reply),
-            "connections.total=%zu\n"
-            "connections.current=%zu\n",
-            mng_total_connections,
-            mng_current_connections);
-
+        char reply[1024];
+        int len = metrics_format(reply, sizeof(reply));
         send(key->fd, reply, len, MSG_NOSIGNAL);
+    } else if (strncmp(buf, "USERS", 5) == 0) {
+        char reply[256];
+        size_t count = users_count();
+        int len = snprintf(reply, sizeof(reply),
+            "users.count=%zu\n",
+            count);
+        send(key->fd, reply, len, MSG_NOSIGNAL);
+    } else if (strncmp(buf, "CREDS", 5) == 0) {
+        char reply[256];
+        size_t count = dissector_get_credential_count();
+        int len = snprintf(reply, sizeof(reply),
+            "credentials.captured=%zu\n"
+            "credentials.enabled=%s\n",
+            count,
+            dissector_is_enabled() ? "true" : "false");
+        send(key->fd, reply, len, MSG_NOSIGNAL);
+    } else if (strncmp(buf, "HELP", 4) == 0) {
+        const char *help = 
+            "Available commands:\n"
+            "  STATS - Show server statistics\n"
+            "  USERS - Show user count\n"
+            "  CREDS - Show credential capture stats\n"
+            "  HELP  - Show this help\n"
+            "  QUIT  - Close connection\n";
+        send(key->fd, help, strlen(help), MSG_NOSIGNAL);
     } else if (strncmp(buf, "QUIT", 4) == 0) {
+        // Clean up before unregistering
+        mng_close(key);
         selector_unregister(key->s, key->fd);
     } else {
-        const char *err = "ERR unknown command\n";
+        const char *err = "ERR unknown command (try HELP)\n";
         send(key->fd, err, strlen(err), MSG_NOSIGNAL);
     }
 }
@@ -203,6 +237,22 @@ int main(const int argc, char **argv) {
     LOGI("Starting SOCKS5 server");
     
     users_setup();
+    
+    // Inicializar sistema de access log
+    access_log_init("access.log");
+    LOGI("Access logging initialized");
+    
+    // Inicializar sistema de métricas
+    metrics_init();
+    LOGI("Metrics system initialized");
+    
+    // Inicializar dissector de credenciales
+    dissector_init(args.disectors_enabled, "credentials.log");
+    if (args.disectors_enabled) {
+        LOGI("Credential dissector ENABLED");
+    } else {
+        LOGI("Credential dissector DISABLED");
+    }
     
     // no tenemos nada que leer de stdin
     // close(0);

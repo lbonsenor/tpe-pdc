@@ -91,6 +91,14 @@ struct socks5 {
     buffer                  read_buffer;
     buffer                  write_buffer;
 
+    // Campos para access logging y métricas
+    char                    username[256];      // Usuario autenticado
+    char                    dest_host[256];     // Hostname o IP destino
+    uint16_t                dest_port;          // Puerto destino
+    time_t                  connect_time;       // Momento de conexión
+    uint64_t                bytes_to_origin;    // Bytes enviados al destino
+    uint64_t                bytes_from_origin;  // Bytes recibidos del destino
+
     struct socks5           *next;
     uint32_t                references;
 };

@@ -27,6 +27,10 @@
 #include "netutils.h"
 #include "users.h"
 #include "socks5.h"
+#include "access_log.h"
+#include "dissector.h"
+#include "metrics.h"
+#include "logger.h"
 
 #define BUFFER_SIZE 8192
 
@@ -398,6 +402,17 @@ socksv5_passive_accept(struct selector_key *key) {
     
     memcpy(&state->client_addr, &client_addr, client_addr_len);
     state->client_addr_len = client_addr_len;
+    
+    // Inicializar campos para logging
+    state->username[0] = '\0';
+    state->dest_host[0] = '\0';
+    state->dest_port = 0;
+    state->connect_time = time(NULL);
+    state->bytes_to_origin = 0;
+    state->bytes_from_origin = 0;
+    
+    // Registrar nueva conexión en métricas
+    metrics_connection_new();
 
     if(SELECTOR_SUCCESS != selector_register(key->s, client, &socks5_handler,
                                               OP_READ, state)) {
@@ -570,6 +585,7 @@ request_read(struct selector_key *key) {
 static unsigned
 request_process(struct selector_key *key) {
     struct request_st *d = &ATTACHMENT(key)->client.request;
+    struct socks5 *s = ATTACHMENT(key);
 
     fprintf(stderr,
         "[REQ] version=%u cmd=%u atyp=%u port=%u\n",
@@ -577,6 +593,17 @@ request_process(struct selector_key *key) {
         d->parser.cmd,
         d->parser.atyp,
         d->parser.dest_port);
+    
+    // Guardar destino para logging
+    s->dest_port = d->parser.dest_port;
+    if (d->parser.atyp == SOCKS_ATYP_DOMAIN) {
+        strncpy(s->dest_host, d->parser.dest_addr.domain, sizeof(s->dest_host) - 1);
+        s->dest_host[sizeof(s->dest_host) - 1] = '\0';
+    } else if (d->parser.atyp == SOCKS_ATYP_IPV4) {
+        inet_ntop(AF_INET, &d->parser.dest_addr.ipv4, s->dest_host, sizeof(s->dest_host));
+    } else if (d->parser.atyp == SOCKS_ATYP_IPV6) {
+        inet_ntop(AF_INET6, &d->parser.dest_addr.ipv6, s->dest_host, sizeof(s->dest_host));
+    }
 
     unsigned ret;
     
@@ -819,11 +846,22 @@ request_connecting(struct selector_key *key) {
             fprintf(stderr, "[CONNECTING] connected OK\n");
             req->reply = SOCKS_REPLY_SUCCEEDED;
             ret = REQUEST_WRITE;
+            
             // Connection succeeded, change origin interest to NOOP
             struct socks5 *s = ATTACHMENT(key);
             selector_set_interest(key->s, *d->fd, OP_NOOP);
             // Set client_fd to write the response
             selector_set_interest(key->s, s->client_fd, OP_WRITE);
+            
+            // Log conexión exitosa
+            access_log_connection(
+                s->username[0] != '\0' ? s->username : NULL,
+                (struct sockaddr *)&s->client_addr,
+                s->dest_host,
+                s->dest_port,
+                d->current_addr->ai_addr
+            );
+            
             break;
         } else if (errno == EINPROGRESS || errno == EALREADY) {
             ret = REQUEST_CONNECTING;
@@ -924,10 +962,30 @@ auth_read(struct selector_key *key) {
             {
                 if (users_authenticate(d->parser.username, d->parser.password))
                 {
+                    struct socks5 *s = ATTACHMENT(key);
+                    
+                    // Guardar username para access logging
+                    strncpy(s->username, d->parser.username, sizeof(s->username) - 1);
+                    s->username[sizeof(s->username) - 1] = '\0';
+                    
+                    // Log autenticación exitosa
+                    access_log_auth(d->parser.username, 
+                                   (struct sockaddr *)&s->client_addr, 
+                                   true);
+                    metrics_auth_success();
+                    
                     d->status = AUTH_STATUS_SUCCESS;
                     ret = AUTH_WRITE;
                 } else
                 {
+                    struct socks5 *s = ATTACHMENT(key);
+                    
+                    // Log autenticación fallida
+                    access_log_auth(d->parser.username,
+                                   (struct sockaddr *)&s->client_addr,
+                                   false);
+                    metrics_auth_failed();
+                    
                     d->status = AUTH_STATUS_FAILURE;
                     ret = AUTH_WRITE;
                 }
@@ -1065,6 +1123,21 @@ copy_read(struct selector_key *key) {
     
     if (n > 0) {
         buffer_write_adv(b, n);
+        
+        // Rastrear bytes y diseccionar si es desde el cliente
+        if (key->fd == s->client_fd) {
+            s->bytes_to_origin += n;
+            metrics_bytes_received(n);
+            
+            // Diseccionar datos del cliente buscando credenciales
+            if (dissector_is_enabled()) {
+                dissector_process_client_data(ptr, n, s->dest_host, s->dest_port);
+            }
+        } else {
+            s->bytes_from_origin += n;
+            metrics_bytes_sent(n);
+        }
+        
         // Enable writing on the other side
         selector_set_interest(key->s, *d->other->fd, OP_WRITE);
         // If buffer is now full, stop reading
@@ -1179,6 +1252,22 @@ socksv5_close(struct selector_key *key) {
     if (s == NULL) {
         return;
     }
+    
+    // Log disconnect si llegó al estado de COPY (conexión establecida)
+    if (s->dest_host[0] != '\0') {
+        time_t duration = time(NULL) - s->connect_time;
+        access_log_disconnect(
+            s->username[0] != '\0' ? s->username : NULL,
+            s->dest_host,
+            s->dest_port,
+            s->bytes_to_origin,
+            s->bytes_from_origin,
+            duration
+        );
+    }
+    
+    // Actualizar métricas
+    metrics_connection_close();
     
     // Save values we need before any operations that might free s
     int client_fd = s->client_fd;

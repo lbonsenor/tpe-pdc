@@ -71,9 +71,10 @@ static void move_cursor_up(int n) {
     if (n > 0) printf("\033[%dA", n);
 }
 
-static void move_cursor_down(int n) {
-    if (n > 0) printf("\033[%dB", n);
-}
+// Unused for now
+// static void move_cursor_down(int n) {
+//     if (n > 0) printf("\033[%dB", n);
+// }
 
 static void hide_cursor(void) {
     printf("\033[?25l");
