@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include "buffer.h"
 
+// https://datatracker.ietf.org/doc/html/rfc1928#:~:text=VER
 enum hello_state {
     hello_version,
     hello_nmethods,

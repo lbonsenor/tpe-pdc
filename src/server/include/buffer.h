@@ -2,6 +2,7 @@
 #define BUFFER_H_VelRDAxzvnuFmwEaR0ftrkIinkT
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <unistd.h>  // size_t, ssize_t
 
 /**
