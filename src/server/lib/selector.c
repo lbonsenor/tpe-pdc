@@ -7,6 +7,8 @@
 #include <fcntl.h>
 #include <errno.h>
 
+#include <stdio.h>
+
 #include "../include/selector.h"
 #include "selector.h"
 
@@ -125,8 +127,12 @@ void selector_destroy(fd_selector s) {
                 s->fds[i].handler.handle_close(&key);
             }
             
-            close(s->fds[i].fd);
-            s->fds[i].fd = INVALID_FD;
+            // Don't close here - handle_close is responsible for cleanup
+            // Just mark as invalid in case handle_close didn't
+            if (s->fds[i].fd != INVALID_FD) {
+                close(s->fds[i].fd);
+                s->fds[i].fd = INVALID_FD;
+            }
         }
     }
     
@@ -198,6 +204,29 @@ selector_unregister(fd_selector s, const int fd) {
     item->fd = INVALID_FD;
     item->interest = OP_NOOP;
     item->data = NULL;
+}
+
+selector_status selector_set_interest(fd_selector s, int fd, fd_interest interest) {
+    if (s == NULL || fd < 0 || fd >= (int)s->max_fds) {
+        return SELECTOR_IARGS;
+    }
+    
+    struct epoll_event event;
+    event.events = 0;
+    event.data.ptr = &s->fds[fd];
+    
+    if (interest & OP_READ) {
+        event.events |= EPOLLIN;
+    }
+    if (interest & OP_WRITE) {
+        event.events |= EPOLLOUT;
+    }
+    
+    if (epoll_ctl(s->epoll_fd, EPOLL_CTL_MOD, fd, &event) < 0) {
+        return SELECTOR_IO;
+    }
+    
+    return SELECTOR_SUCCESS;
 }
 
 selector_status selector_set_interest_key(struct selector_key *key, fd_interest interest) {
@@ -273,17 +302,27 @@ selector_status selector_select(fd_selector s) {
         if (e->events & EPOLLIN) {
             if (it->handler.handle_read) {
                 it->handler.handle_read(&key);
+                // Check if fd was unregistered during handler
+                if (it->fd == INVALID_FD || it->data == NULL) {
+                    continue;
+                }
             }
         }
         
         if (e->events & EPOLLOUT) {
             if (it->handler.handle_write) {
                 it->handler.handle_write(&key);
+                // Check if fd was unregistered during handler
+                if (it->fd == INVALID_FD || it->data == NULL) {
+                    continue;
+                }
             }
         }
         
         if (e->events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)) {
-            if (it->handler.handle_close) {
+            // Double-check fd is still valid and data not invalidated
+            if (it->fd != INVALID_FD && it->data != NULL && it->handler.handle_close) {
+                key.data = it->data;  // Refresh key data
                 it->handler.handle_close(&key);
             }
         }
@@ -295,4 +334,14 @@ selector_status selector_select(fd_selector s) {
 const char *selector_error(fd_selector s) {
     (void)s;  // Unused parameter
     return strerror(errno);
+}
+
+void
+selector_invalidate_data(fd_selector s, int fd) {
+    if (s == NULL || fd < 0 || (size_t)fd >= s->max_fds) {
+        return;
+    }
+    if (s->fds[fd].fd == fd) {
+        s->fds[fd].data = NULL;
+    }
 }
