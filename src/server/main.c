@@ -267,9 +267,15 @@ static void mng_read(struct selector_key *key) {
             "  ADDUSER <user> <pass> - Add/update user\n"
             "  DELUSER <user> - Delete user\n"
             "  CREDS - Show credential capture stats\n"
+            "  SHUTDOWN - Gracefully shutdown server\n"
             "  HELP  - Show this help\n"
             "  QUIT  - Close connection\n";
         send(key->fd, help, strlen(help), MSG_NOSIGNAL);
+    } else if (strncmp(buf, "SHUTDOWN", 8) == 0) {
+        const char *msg = "OK shutting down server...\n";
+        send(key->fd, msg, strlen(msg), MSG_NOSIGNAL);
+        LOGI("Shutdown requested via management interface");
+        done = true;
     } else if (strncmp(buf, "QUIT", 4) == 0) {
         // Clean up before unregistering
         mng_close(key);

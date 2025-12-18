@@ -50,6 +50,7 @@ static void usage(const char *progname) {
             "   ADDUSER <u> <p>  Add new user with username and password\n"
             "   DELUSER <user>   Delete user\n"
             "   CREDS            Show captured credentials count\n"
+            "   SHUTDOWN         Gracefully shutdown server\n"
             "   HELP             Show server help\n"
             "   QUIT             Disconnect from server\n"
             "\n"
@@ -202,7 +203,10 @@ static int receive_response(int sock, char *buffer, size_t bufsize) {
                 // Timeout - assume we got full response
                 break;
             }
-            perror("read");
+            // Don't print error if connection was reset (server shutdown)
+            if (errno != ECONNRESET && errno != EPIPE) {
+                perror("read");
+            }
             break;
         }
         if (n == 0) {
@@ -271,6 +275,21 @@ static void interactive_mode(int sock) {
             break;
         }
         
+        // Check if shutdown was requested
+        if (strcasecmp(input, "SHUTDOWN") == 0) {
+            // Receive response
+            memset(buffer, 0, sizeof(buffer));
+            int received = receive_response(sock, buffer, sizeof(buffer));
+            if (received > 0) {
+                printf("%s", buffer);
+                if (buffer[received - 1] != '\n') {
+                    printf("\n");
+                }
+            }
+            printf("Server is shutting down. Disconnecting...\n");
+            break;
+        }
+        
         // Receive response
         memset(buffer, 0, sizeof(buffer));
         int received = receive_response(sock, buffer, sizeof(buffer));
@@ -279,6 +298,14 @@ static void interactive_mode(int sock) {
             if (buffer[received - 1] != '\n') {
                 printf("\n");
             }
+        } else if (received == 0) {
+            // Connection closed by server
+            printf("\nConnection closed by server.\n");
+            break;
+        } else {
+            // Error reading
+            fprintf(stderr, "\nError reading from server.\n");
+            break;
         }
     }
 }
