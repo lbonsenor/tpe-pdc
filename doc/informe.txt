@@ -1,0 +1,191 @@
+Trabajo Práctico Especial 2025/2
+
+Servidor Proxy SOCKSv5
+
+Autores:
+    - Roman Berruti
+    - Lautaro Bonseñor      62842
+    - Toribio Viton Sconza
+    - Mateo Hernán Cornejo
+
+Fecha: 18/11/2025
+Materia: Protocolos de Comunicación
+Institución: Instituto Tecnológico de Buenos Aires (ITBA)
+
+1. Descripción detallada de los protocolos y aplicaciones desarrolladas
+    1.1. Introducción al proyecto
+    1.2. Protocolo SOCKSv5 (RFC 1928)
+        1.2.1. Descripción general del protocolo
+        1.2.2. Proceso de negociación
+        1.2.3. Autenticación usuario/contraseña (RFC 1929)
+        1.2.4. Fase de solicitud de conexión
+        1.2.5. Fase de relay de datos
+    1.3. Protocolo de Configuración y Monitoreo
+        1.3.1. Diseño del protocolo
+        1.3.2. Especificación formal del protocolo
+        1.3.3. Comandos implementados
+    1.4. Servidor Proxy SOCKS
+        1.4.1. Arquitectura general
+        1.4.2. Manejo de concurrencia
+        1.4.3. Gestión de conexiones salientes
+        1.4.4. Sistema de métricas
+        1.4.5. Sistema de logging
+        1.4.6. Monitor de credenciales (Segunda entrega)
+    1.5. Cliente de Configuración/Monitoreo
+        1.5.1. Funcionalidades implementadas
+        1.5.2. Ejemplos de uso
+2. Problemas encontrados durante el diseño y la implementación
+    2.1. Problemas de diseño
+   2.1.1. Decisiones de arquitectura
+   2.1.2. Diseño del protocolo de monitoreo
+    2.2. Problemas de implementación
+       2.2.1. Manejo de I/O no bloqueante
+       2.2.2. Lecturas y escrituras parciales
+       2.2.3. Resolución de nombres de dominio
+       2.2.4. Gestión de memoria
+       2.2.5. Concurrencia y sincronización
+       2.2.6. Otros problemas técnicos
+3. Limitaciones de la aplicación
+    3.1. Limitaciones del protocolo SOCKS
+       3.1.1. Comandos no implementados
+       3.1.2. Métodos de autenticación
+    3.2. Limitaciones de escalabilidad
+       3.2.1. Límite de conexiones concurrentes
+       3.2.2. Límites de throughput
+    3.3. Limitaciones funcionales
+       3.3.1. Monitor de credenciales
+       3.3.2. Sistema de logging
+       3.3.3. Configuración en tiempo de ejecución
+    3.4. Limitaciones de portabilidad
+4. Posibles extensiones
+    4.1. Extensiones de funcionalidad
+       4.1.1. Soporte completo de SOCKS
+       4.1.2. Métodos adicionales de autenticación
+       4.1.3. Monitor de credenciales avanzado
+    4.2. Extensiones de rendimiento
+       4.2.1. Optimizaciones de I/O
+       4.2.2. Arquitectura multiproceso o multihilo
+    4.3. Extensiones de monitoreo y administración
+       4.3.1. Dashboard web
+       4.3.2. Integración con sistemas de monitoreo
+       4.3.3. Control de acceso granular
+    4.4. Extensiones de seguridad
+       4.4.1. Rate limiting
+       4.4.2. Logging mejorado
+5. Conclusiones
+    5.1. Cumplimiento de objetivos
+    5.2. Experiencia del desarrollo
+    5.3. Reflexiones técnicas
+    5.4. Trabajo en equipo
+
+6. Ejemplos de prueba
+    6.1. Casos de prueba del servidor SOCKS
+       6.1.1. Pruebas básicas de conectividad
+       6.1.2. Pruebas de autenticación
+       6.1.3. Pruebas con distintos tipos de direcciones
+       6.1.4. Pruebas de concurrencia
+    6.2. Casos de prueba del protocolo de monitoreo
+       6.2.1. Gestión de usuarios
+       6.2.2. Consulta de métricas
+       6.2.3. Modificación de configuración
+    6.3. Pruebas de stress
+       6.3.1. Metodología
+       6.3.2. Resultados
+    6.4. Pruebas de robustez
+       6.4.1. Manejo de errores
+       6.4.2. Pruebas con múltiples IPs
+7. Guía de instalación
+    7.1. Requisitos previos
+       7.1.1. Sistema operativo
+       7.1.2. Dependencias
+       7.1.3. Herramientas de compilación
+    7.2. Obtención del código fuente
+    7.3. Compilación
+       7.3.1. Compilación estándar
+       7.3.2. Opciones de compilación
+       7.3.3. Verificación de la compilación
+    7.4. Instalación del sistema
+    7.5. Configuración inicial
+       7.5.1. Archivos de configuración
+       7.5.2. Permisos y usuarios
+    7.6. Verificación de la instalación
+8. Instrucciones para la configuración
+    8.1. Archivo de configuración
+       8.1.1. Ubicación y formato
+       8.1.2. Parámetros del servidor SOCKS
+       8.1.3. Parámetros del servidor de administración
+       8.1.4. Configuración de usuarios
+       8.1.5. Configuración de logging
+    8.2. Argumentos de línea de comandos
+       8.2.1. Servidor SOCKS
+       8.2.2. Cliente de administración
+    8.3. Variables de entorno
+
+9. Ejemplos de configuración y monitoreo
+    9.1. Configuración inicial básica
+       9.1.1. Servidor sin autenticación
+       9.1.2. Servidor con autenticación
+    9.2. Gestión de usuarios
+       9.2.1. Agregar usuario
+       9.2.2. Listar usuarios
+       9.2.3. Eliminar usuario
+       9.2.4. Cambiar contraseña
+    9.3. Consulta de métricas
+       9.3.1. Métricas generales
+       9.3.2. Métricas por usuario
+       9.3.3. Métricas detalladas
+    9.4. Modificación de configuración en tiempo de ejecución
+       9.4.1. Cambio de timeout
+       9.4.2. Cambio de tamaño de buffer
+       9.4.3. Visualización de la configuración
+    9.5. Monitoreo de logs
+       9.5.1. Formato de logs
+       9.5.2. Consulta de logs
+    9.6. Escenarios avanzados
+       9.6.1. Múltiples interfaces
+       9.6.2. Integración con herramientas externas
+10. Documento de diseño del proyecto
+    10.1. Arquitectura general
+       10.1.1. Diagrama de arquitectura
+       10.1.2. Componentes principales
+    10.2. Diseño del servidor SOCKS
+       10.2.1. Diagrama de estados
+       10.2.2. Máquina de estados
+       10.2.3. Estructuras de datos
+       10.2.4. Flujo de procesamiento
+    10.3. Manejo de I/O multiplexado
+       10.3.1. Elección de la API
+       10.3.2. Event loop
+       10.3.3. Gestión de file descriptors
+    10.4. Gestión de buffers
+       10.4.1. Diseño del buffer
+       10.4.2. Estrategias de buffering
+    10.5. Parser del protocolo SOCKS
+       10.5.1. Arquitectura del parser
+       10.5.2. Manejo de mensajes parciales
+    10.6. Sistema de autenticación
+       10.6.1. Almacenamiento de credenciales
+       10.6.2. Validación
+    10.7. Resolución de nombres
+       10.7.1. Estrategia de DNS
+       10.7.2. Manejo de múltiples direcciones
+    10.8. Sistema de métricas
+       10.8.1. Estructuras de datos
+       10.8.2. Actualización de métricas
+    10.9. Sistema de logging
+       10.9.1. Arquitectura
+       10.9.2. Información registrada
+    10.10. Protocolo de administración
+       10.10.1. Formato de mensajes
+       10.10.2. Comandos y respuestas
+       10.10.3. Seguridad
+    10.11. Monitor de credenciales
+       10.11.1. Arquitectura
+       10.11.2. Parser de protocolos
+       10.11.3. Almacenamiento
+    10.12. Organización del código fuente
+    10.13. Módulos y responsabilidades
+    10.14. Decisiones de diseño importantes
+       10.14.1. Decisión de diseño 1
+       10.14.2. Decisión de diseño 2
+    10.15. Diagramas adicionales
