@@ -27,6 +27,7 @@
 #include "include/socks5.h"
 #include "include/selector.h"
 #include "include/socks5nio.h"
+#include "include/users.h"
 
 static bool done = false;
 
@@ -44,6 +45,10 @@ static void cleanup(fd_selector selector, int server_fd) {
     if (selector != NULL) {
         selector_destroy(selector);  // This should free all resources
     }
+
+    users_destroy();
+
+    socksv5_pool_destroy();
 }
 
 int main(const int argc, char **argv) {
@@ -67,6 +72,17 @@ int main(const int argc, char **argv) {
     } else {
         fprintf(stderr, "Usage: %s <port>\n", argv[0]);
         return 1;
+    }
+
+    users_init();
+
+    size_t user_count = users_count();
+    printf("[INFO] Usuarios configurados: %zu\n", user_count);
+    
+    if (user_count > 0) {
+        printf("[INFO] Autenticación REQUERIDA (método 0x02)\n");
+    } else {
+        printf("[WARNING] Autenticación DESHABILITADA (método 0x00)\n");
     }
 
     // no tenemos nada que leer de stdin

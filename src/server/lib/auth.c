@@ -1,5 +1,5 @@
-#include "../include/auth.h"
 #include "auth.h"
+#include <string.h>
 
 void auth_parser_init(struct auth_parser *p)
 {
@@ -120,7 +120,7 @@ enum auth_state auth_consume(buffer *b, struct auth_parser *p, bool *error){
 
 bool auth_is_done(enum auth_state state, bool *error)
 {
-    return state == AUTH_STATE_DONE || state == AUTH_STATE_ERROR;
+    return state == AUTH_STATE_DONE || state == AUTH_STATE_ERROR || (error && *error);
 }
 
 int auth_marshall(buffer *b, enum auth_status status)

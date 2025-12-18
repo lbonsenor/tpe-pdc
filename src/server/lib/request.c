@@ -218,7 +218,7 @@ int request_marshall(buffer *b, enum socks_reply reply)
 
 bool is_request_done(enum request_state state, bool *error)
 {
-    return state == REQUEST_DONE || state == REQUEST_ERROR;
+    return state == REQUEST_DONE || state == REQUEST_ERROR || (error && *error);
 }
 
 void request_parser_close(struct request_parser *p)

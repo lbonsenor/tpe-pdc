@@ -1,5 +1,5 @@
 #ifndef USERS_H
-#define USERS
+#define USERS_H
 
 /**
  * users.h - Sistema de manejo de authorized users
