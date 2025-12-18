@@ -21,6 +21,7 @@
 #include "buffer.h"
 #include "hello.h"
 #include "request.h"
+#include "auth.h"
 #include "stm.h"
 #include "socks5nio.h"
 #include "netutils.h"
@@ -106,9 +107,35 @@ enum socks_v5state {
      * Transiciones:
      *      - REQUEST_WRITE mientras queden bytes
      *      - COPY          cuando se envió todo
-     *      - ERRO          ante cualquier error
+     *      - ERROR         ante cualquier error
      */
     REQUEST_WRITE,
+
+    /**
+     * recibe las credenciales del cliente
+     * 
+     * Intereses:
+     *      - OP_READ sobre client_fd
+     *  
+     * Transiciones:
+     *      - AUTH_READ     mientras el mensaje no esté completo
+     *      - AUTH_WRITE    cuando está completo
+     *      - ERROR         ante cualquier error
+     */
+    AUTH_READ,
+
+    /**
+     * envía la respuesta de auth al client
+     * 
+     * Intereses:
+     *      - OP_WRITE sobre client_fd
+     * 
+     * Transiciones:
+     *      - AUTH_WRITE    mientras queden bytes
+     *      - REQUEST_READ  si la autenticación es exitosa
+     *      - ERROR         si la auth falló o error I/O
+     */
+    AUTH_WRITE,
 
     /**
      * copia datos entre client y origin
@@ -148,6 +175,13 @@ struct request_st {
     struct addrinfo        *current_addr;  
 };
 
+struct auth_st
+{
+    buffer                  *rb, *wb;
+    struct auth_parser      parser;
+    enum auth_status        status;
+};
+
 struct connecting {
     int             *fd;
     struct addrinfo *current_addr;
@@ -184,6 +218,7 @@ struct socks5 {
     union {
         struct hello_st           hello;
         struct request_st         request;
+        struct auth_st            auth;
         struct copy               copy;
     } client;
     /** estados para el origin_fd */
@@ -241,6 +276,14 @@ static const struct state_definition client_statbl[] = {
     },{
         .state              = REQUEST_WRITE,
         // .on_write_ready     = request_write,        // TODO
+    },{
+        .state              = AUTH_READ,
+        // .on_arrival         = auth_init             // TODO
+        // .on_departure       = auth_read_close       // TODO
+        // .on_read_ready      = AUTH_READ             // TODO
+    },{
+        .state              = AUTH_WRITE,
+        // .on_write_ready     = auth_write            // TODO
     },{
         .state              = COPY,
         // .on_arrival         = copy_init,            // TODO
