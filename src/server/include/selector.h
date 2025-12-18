@@ -105,4 +105,9 @@ int selector_fd_set_nio(int fd);
 selector_status selector_select(fd_selector s);
 const char *selector_error(fd_selector s);
 
+/// @brief Invalidates the data pointer for a given fd (sets to NULL)
+/// @param s    Selector
+/// @param fd   File Descriptor
+void selector_invalidate_data(fd_selector s, int fd);
+
 #endif

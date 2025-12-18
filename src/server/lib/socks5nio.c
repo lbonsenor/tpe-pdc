@@ -265,25 +265,6 @@ static const struct state_definition client_statbl[] = {
     }
 };
 
-/** realmente destruye */
-static void
-socks5_destroy_(struct socks5* s) {
-    if(s->origin_resolution != NULL) {
-        // Check if this is a manually allocated addrinfo (for direct IP)
-        struct addrinfo *ai = s->origin_resolution;
-        if (ai->ai_next == NULL && ai->ai_addr != NULL) {
-            // Likely manually allocated, free both addr and ai
-            free(ai->ai_addr);
-            free(ai);
-        } else {
-            // From getaddrinfo, use freeaddrinfo
-            freeaddrinfo(s->origin_resolution);
-        }
-        s->origin_resolution = NULL;
-    }
-    free(s);
-}
-
 static struct socks5 *
 socks5_new(int client_fd) {
     struct socks5 *ret;
@@ -337,12 +318,27 @@ socks5_destroy(struct socks5 *s) {
         // nada para hacer
     } else if(s->references == 1) {
         if(s != NULL) {
+            // Clean up origin_resolution before pooling/freeing
+            if(s->origin_resolution != NULL) {
+                // Check if this is a manually allocated addrinfo (for direct IP)
+                struct addrinfo *ai = s->origin_resolution;
+                if (ai->ai_next == NULL && ai->ai_addr != NULL) {
+                    // Likely manually allocated, free both addr and ai
+                    free(ai->ai_addr);
+                    free(ai);
+                } else {
+                    // From getaddrinfo, use freeaddrinfo
+                    freeaddrinfo(s->origin_resolution);
+                }
+                s->origin_resolution = NULL;
+            }
+            
             if(pool_size < max_pool) {
                 s->next = pool;
                 pool    = s;
                 pool_size++;
             } else {
-                socks5_destroy_(s);
+                free(s);
             }
         }
     } else {
@@ -737,9 +733,7 @@ request_connecting(struct selector_key *key) {
             ret = REQUEST_WRITE;
             // Connection succeeded, change origin interest to NOOP
             struct socks5 *s = ATTACHMENT(key);
-            printf("DEBUG request_connecting: setting origin_fd=%d to OP_NOOP\n", *d->fd);
-            selector_status int_status = selector_set_interest(key->s, *d->fd, OP_NOOP);
-            printf("DEBUG request_connecting: set_interest returned %d\n", int_status);
+            selector_set_interest(key->s, *d->fd, OP_NOOP);
             // Set client_fd to write the response
             selector_set_interest(key->s, s->client_fd, OP_WRITE);
             break;
@@ -826,16 +820,11 @@ copy_init(const unsigned state, struct selector_key *key) {
     s->orig.copy.duplex = DUPLEX_READ | DUPLEX_WRITE;
     s->orig.copy.other = &s->client.copy;
     
-    size_t read_buf_bytes = buffer_can_read(&s->read_buffer);
-    printf("DEBUG copy_init: read_buffer has %zu bytes\n", read_buf_bytes);
-    
     // If there's data in read_buffer (pipelined from client), set origin to write
-    if (read_buf_bytes > 0) {
-        printf("DEBUG: Pipelined data detected, setting origin to WRITE\n");
+    if (buffer_can_read(&s->read_buffer)) {
         selector_set_interest(key->s, s->origin_fd, OP_WRITE);
         selector_set_interest_key(key, OP_NOOP);
     } else {
-        printf("DEBUG: No pipelined data, setting both to READ\n");
         selector_set_interest_key(key, OP_READ);
         selector_set_interest(key->s, s->origin_fd, OP_READ);
     }
@@ -846,12 +835,8 @@ copy_read(struct selector_key *key) {
     struct socks5 *s = ATTACHMENT(key);
     // Determine which side we're reading from
     struct copy *d = (key->fd == s->client_fd) ? &s->client.copy : &s->orig.copy;
-    const char *side = (key->fd == s->client_fd) ? "client" : "origin";
-    
-    printf("DEBUG copy_read: called on %s (fd=%d)\n", side, key->fd);
     
     if (!(d->duplex & DUPLEX_READ)) {
-        printf("DEBUG copy_read: %s DUPLEX_READ disabled\n", side);
         return COPY;
     }
     
@@ -866,21 +851,17 @@ copy_read(struct selector_key *key) {
     }
     
     ssize_t n = recv(key->fd, ptr, nbytes, 0);
-    printf("DEBUG copy_read: %s recv returned %zd (requested %zu)\n", side, n, nbytes);
     
     if (n > 0) {
         buffer_write_adv(b, n);
         // Enable writing on the other side
-        printf("DEBUG copy_read: %s read %zd bytes, enabling WRITE on other side (fd=%d)\n", side, n, *d->other->fd);
-        int ret = selector_set_interest(key->s, *d->other->fd, OP_WRITE);
-        printf("DEBUG copy_read: selector_set_interest returned %d\n", ret);
+        selector_set_interest(key->s, *d->other->fd, OP_WRITE);
         // If buffer is now full, stop reading
         if (!buffer_can_write(b)) {
             selector_set_interest_key(key, OP_NOOP);
         }
     } else if (n == 0) {
         // EOF - close this read direction
-        printf("DEBUG copy_read: %s EOF detected, closing read direction\n", side);
         d->duplex &= ~DUPLEX_READ;
         selector_set_interest_key(key, OP_NOOP);  // Stop reading from this fd
         if (d->other->duplex & DUPLEX_WRITE) {
@@ -889,11 +870,8 @@ copy_read(struct selector_key *key) {
             size_t pending_bytes;
             buffer_read_ptr(send_buf, &pending_bytes);
             if (pending_bytes == 0) {
-                printf("DEBUG copy_read: %s no pending data, shutting down other write\n", side);
                 shutdown(*d->other->fd, SHUT_WR);
                 d->other->duplex &= ~DUPLEX_WRITE;
-            } else {
-                printf("DEBUG copy_read: %s has %zu bytes pending, keeping other write open\n", side, pending_bytes);
             }
         }
     } else {
@@ -913,12 +891,8 @@ copy_write(struct selector_key *key) {
     struct socks5 *s = ATTACHMENT(key);
     // Determine which side we're writing to
     struct copy *d = (key->fd == s->client_fd) ? &s->client.copy : &s->orig.copy;
-    const char *side = (key->fd == s->client_fd) ? "client" : "origin";
-    
-    printf("DEBUG copy_write: called on %s (fd=%d)\n", side, key->fd);
     
     if (!(d->duplex & DUPLEX_WRITE)) {
-        printf("DEBUG copy_write: %s DUPLEX_WRITE disabled\n", side);
         return COPY;
     }
     
@@ -937,7 +911,6 @@ copy_write(struct selector_key *key) {
     }
     
     ssize_t n = send(key->fd, ptr, nbytes, MSG_NOSIGNAL);
-    printf("DEBUG copy_write: %s send returned %zd (had %zu bytes)\n", side, n, nbytes);
     
     if (n > 0) {
         buffer_read_adv(b, n);
@@ -996,27 +969,28 @@ socksv5_close(struct selector_key *key) {
         return;
     }
     
-    // Mark as NULL to prevent double-free
-    key->data = NULL;
+    // Save values we need before any operations that might free s
+    int client_fd = s->client_fd;
+    int origin_fd = s->origin_fd;
+    int this_fd = key->fd;
+    fd_selector selector = key->s;
     
-    if (s->client_fd != -1) {
-        close(s->client_fd);
-        s->client_fd = -1;
+    // Unregister the other fd first (if it exists and is different)
+    if (client_fd != -1 && origin_fd != -1 && client_fd != origin_fd) {
+        int other_fd = (this_fd == client_fd) ? origin_fd : client_fd;
+        selector_unregister(selector, other_fd);
     }
     
-    if (s->origin_fd != -1) {
-        close(s->origin_fd);
-        s->origin_fd = -1;
-    }
+    // Unregister this fd (selector_unregister will close it)
+    selector_unregister(selector, this_fd);
     
+    // Decrement references - may free s
     socks5_destroy(s);
 }
 
 static void
 socksv5_read(struct selector_key *key) {
     struct state_machine *stm = &ATTACHMENT(key)->stm;
-    struct socks5 *s = ATTACHMENT(key);
-    printf("DEBUG socksv5_read: fd=%d (client=%d, origin=%d)\n", key->fd, s->client_fd, s->origin_fd);
     
     const enum socks_v5state st = stm_handler_read(stm, key);
     
@@ -1028,8 +1002,6 @@ socksv5_read(struct selector_key *key) {
 static void
 socksv5_write(struct selector_key *key) {
     struct state_machine *stm = &ATTACHMENT(key)->stm;
-    struct socks5 *s = ATTACHMENT(key);
-    printf("DEBUG socksv5_write: fd=%d (client=%d, origin=%d)\n", key->fd, s->client_fd, s->origin_fd);
     
     const enum socks_v5state st = stm_handler_write(stm, key);
     
