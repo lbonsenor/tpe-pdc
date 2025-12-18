@@ -196,6 +196,42 @@ static void mng_read(struct selector_key *key) {
         char reply[1024];
         int len = metrics_format(reply, sizeof(reply));
         send(key->fd, reply, len, MSG_NOSIGNAL);
+    } else if (strncmp(buf, "LISTUSERS", 9) == 0) {
+        char reply[2048];
+        int len = snprintf(reply, sizeof(reply), "users.count=%zu\n", users_count());
+        len += users_list(reply + len, sizeof(reply) - len);
+        send(key->fd, reply, len, MSG_NOSIGNAL);
+    } else if (strncmp(buf, "ADDUSER ", 8) == 0) {
+        // Format: ADDUSER username password
+        char username[256] = {0};
+        char password[256] = {0};
+        if (sscanf(buf + 8, "%255s %255s", username, password) == 2) {
+            if (users_add(username, password)) {
+                const char *ok = "OK user added/updated\n";
+                send(key->fd, ok, strlen(ok), MSG_NOSIGNAL);
+            } else {
+                const char *err = "ERR failed to add user (limit reached?)\n";
+                send(key->fd, err, strlen(err), MSG_NOSIGNAL);
+            }
+        } else {
+            const char *err = "ERR invalid format (use: ADDUSER username password)\n";
+            send(key->fd, err, strlen(err), MSG_NOSIGNAL);
+        }
+    } else if (strncmp(buf, "DELUSER ", 8) == 0) {
+        // Format: DELUSER username
+        char username[256] = {0};
+        if (sscanf(buf + 8, "%255s", username) == 1) {
+            if (users_remove(username)) {
+                const char *ok = "OK user deleted\n";
+                send(key->fd, ok, strlen(ok), MSG_NOSIGNAL);
+            } else {
+                const char *err = "ERR user not found\n";
+                send(key->fd, err, strlen(err), MSG_NOSIGNAL);
+            }
+        } else {
+            const char *err = "ERR invalid format (use: DELUSER username)\n";
+            send(key->fd, err, strlen(err), MSG_NOSIGNAL);
+        }
     } else if (strncmp(buf, "USERS", 5) == 0) {
         char reply[256];
         size_t count = users_count();
@@ -217,6 +253,9 @@ static void mng_read(struct selector_key *key) {
             "Available commands:\n"
             "  STATS - Show server statistics\n"
             "  USERS - Show user count\n"
+            "  LISTUSERS - List all usernames\n"
+            "  ADDUSER <user> <pass> - Add/update user\n"
+            "  DELUSER <user> - Delete user\n"
             "  CREDS - Show credential capture stats\n"
             "  HELP  - Show this help\n"
             "  QUIT  - Close connection\n";
