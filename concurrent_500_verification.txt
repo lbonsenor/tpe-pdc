@@ -1,0 +1,64 @@
+==============================================
+  CONCURRENT CONNECTION TEST
+==============================================
+
+Goal: Verify server handles ≥500 concurrent
+      connections simultaneously
+
+Starting 500 curl processes...
+Each will connect through SOCKS5 and wait 30s
+
+  Launched 50 connections...
+  Launched 100 connections...
+  Launched 150 connections...
+  Launched 200 connections...
+  Launched 250 connections...
+  Launched 300 connections...
+  Launched 350 connections...
+  Launched 400 connections...
+  Launched 450 connections...
+  Launched 500 connections...
+
+All 500 connection attempts launched!
+
+Waiting 5 seconds for connections to establish...
+
+==============================================
+  MEASUREMENT (while connections are alive)
+==============================================
+
+Active curl processes: 496
+
+Server statistics:
+=== SOCKS5 PROXY METRICS ===
+
+Server Status:
+  uptime=0d 0h 0m 17s
+
+Connections:
+  total=500
+  current=496
+  max_concurrent=500
+  failed=0
+
+Data Transfer:
+  bytes_sent=1108
+  bytes_received=41000
+  bytes_total=42108
+
+Authentication:
+  success=500
+  failed=0
+
+==============================================
+  RESULT
+==============================================
+
+✓ SUCCESS: Server handled 500 concurrent connections
+✓ Requirement: ≥500 concurrent
+✓ Status: REQUIREMENT MET!
+
+Waiting for all connections to complete...
+
+Test complete!
+

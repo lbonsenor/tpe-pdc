@@ -1,0 +1,91 @@
+=========================================
+SOCKS5 PROXY STRESS TEST
+=========================================
+
+[TEST 1] Maximum Concurrent Connections
+----------------------------------------
+Testing with increasing number of simultaneous connections...
+
+Testing 10 concurrent connections... 0 active
+  Server reports: 0
+10 current connections
+  Failures: 0
+0
+
+Testing 50 concurrent connections... 0 active
+  Server reports: 0
+50 current connections
+  Failures: 0
+0
+
+Testing 100 concurrent connections... 0 active
+  Server reports: 0
+69 current connections
+  Failures: 0
+0
+
+Testing 200 concurrent connections... 0 active
+  Server reports: 0
+79 current connections
+  Failures: 0
+0
+
+Testing 500 concurrent connections... 0 active
+  Server reports: 0
+88 current connections
+  Failures: 0
+0
+
+Testing 1000 concurrent connections... 0 active
+  Server reports: 0
+135 current connections
+  Failures: 0
+0
+
+
+[TEST 2] Throughput Test
+----------------------------------------
+Downloading 10MB file through proxy...
+
+With 1 parallel downloads... 4s (2 MB/s avg)
+With 5 parallel downloads... 6s (10 MB/s avg)
+With 10 parallel downloads... 9s (17 MB/s avg)
+With 20 parallel downloads... 11s (32 MB/s avg)
+
+[TEST 3] Connection Persistence
+----------------------------------------
+Testing long-lived connections...
+
+Started 10 staggered connections...
+Max concurrent observed: 135
+
+=========================================
+STRESS TEST COMPLETE
+=========================================
+
+Final Statistics:
+=== SOCKS5 PROXY METRICS ===
+
+Server Status:
+  uptime=0d 0h 1m 28s
+
+Connections:
+  total=1906
+  current=1
+  max_concurrent=135
+  failed=0
+
+Data Transfer:
+  bytes_sent=379109524
+  bytes_received=142088
+  bytes_total=379251612
+
+Authentication:
+  success=1906
+  failed=0
+
+NOTE: For production stress testing, use specialized tools like:
+  - apache2-utils (ab)
+  - wrk
+  - hey
+  - locust

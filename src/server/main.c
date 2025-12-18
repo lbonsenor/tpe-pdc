@@ -309,7 +309,10 @@ int main(const int argc, char **argv) {
         return 1;
     }
 
-    fd_selector selector = selector_new(1024);
+    // Increased from 1024 to 2048 to support 500+ concurrent connections
+    // Each SOCKS connection uses 2 FDs (client + origin)
+    // 2048 / 2 = 1024 theoretical max connections (minus overhead)
+    fd_selector selector = selector_new(2048);
     if(selector == NULL) 
     {
         LOGE("selector_new failed");
