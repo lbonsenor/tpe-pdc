@@ -4,7 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Solo instala lo necesario para compilar y correr el proyecto
 RUN apt-get update && \
-    apt-get install -y gcc make build-essential && \
+    apt-get install -y gcc make build-essential curl && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /root
