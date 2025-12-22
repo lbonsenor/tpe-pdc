@@ -291,8 +291,6 @@ static void handle_block_notifications(fd_selector s) {
         if (current->fd < (int)s->max_fds) {
             item *i = &s->fds[current->fd];
             if (i->handler.handle_block != NULL) {
-                // Inyectamos el resultado (addrinfo*) en tu estructura socks5
-                // Asegúrate de castear a tu estructura correcta (struct socks5 *)
                 struct socks5 *ctx = (struct socks5 *)i->data;
                 ctx->origin_resolution = (struct addrinfo *)current->data;
 

@@ -253,12 +253,10 @@ static void *resolution_thread(void *arg) {
     };
     struct addrinfo *result = NULL;
 
-    // Aquí ocurre la magia: getaddrinfo bloquea ESTE hilo, no el principal
     int ret = getaddrinfo(args->host, args->service, &hints, &result);
 
     if (ret != 0) {
         // Falló la resolución: notificamos con NULL
-        // Asegúrate de tener selector_notify_block_with_result en tu selector.h/.c
         selector_notify_block_with_result(args->s, args->fd, NULL);
     } else {
         // Éxito: pasamos la lista de direcciones resuelta
@@ -605,7 +603,7 @@ request_process(struct selector_key *key) {
         inet_ntop(AF_INET6, &d->parser.dest_addr.ipv6, s->dest_host, sizeof(s->dest_host));
     }
 
-    unsigned ret;
+    // unused variable 'ret' removed
     
     if (d->parser.version != 5) {
         d->reply = SOCKS_REPLY_GENERAL_FAILURE;
@@ -620,18 +618,17 @@ request_process(struct selector_key *key) {
     switch (d->parser.atyp) {
         case SOCKS_ATYP_IPV4:
         case SOCKS_ATYP_IPV6:
-            // Si es IP, ya tenemos la dirección, vamos a conectar
-            d->current_addr = NULL; // Deberás manejar la creación de addrinfo para IPs raw en connecting_init
+            d->current_addr = NULL; // IPs raw handled in connecting_init
             return REQUEST_CONNECTING;
         case SOCKS_ATYP_DOMAIN:
-            // SI ES DOMINIO -> Vamos al estado de resolución asíncrona
             return REQUEST_RESOLVE;
         default:
             d->reply = SOCKS_REPLY_ADDRESS_TYPE_NOT_SUPPORTED;
-            return ERROR;
+            // instead of going for ERROR, go to REQUEST_WRITE
+            return REQUEST_WRITE;
     }
-    
-    return ret;
+    // Nunca debería llegar aquí
+    return ERROR;
 }
 
 static void
@@ -648,16 +645,13 @@ static void request_resolve_init(const unsigned state, struct selector_key *key)
     (void)state;
     struct request_st *d = &ATTACHMENT(key)->client.request;
     
-    // Alocamos memoria para los argumentos del hilo
     struct selector_resolution_args *args = malloc(sizeof(*args));
     if (args == NULL) {
         d->reply = SOCKS_REPLY_GENERAL_FAILURE;
-        // Forzamos salto a error si no hay memoria
         selector_set_interest_key(key, OP_WRITE);
         return; // El state machine debería manejar el error
     }
 
-    // Copiamos los datos desde tu parser (definido en request.h)
     strncpy(args->host, d->parser.dest_addr.domain, sizeof(args->host) - 1);
     args->host[sizeof(args->host) - 1] = '\0';
     
@@ -674,7 +668,7 @@ static void request_resolve_init(const unsigned state, struct selector_key *key)
         selector_set_interest_key(key, OP_WRITE); // Ir a enviar error
     } else {
         pthread_detach(tid);
-        // IMPORTANTE: Desuscribimos el interés temporalmente.
+        // Desuscribimos el interés temporalmente.
         // El selector quedará "dormido" para este FD hasta que el hilo avise.
         selector_set_interest_key(key, OP_NOOP);
     }
@@ -685,20 +679,17 @@ static unsigned request_resolve_done(struct selector_key *key) {
     struct request_st *d = &ATTACHMENT(key)->client.request;
     struct socks5 *s     = ATTACHMENT(key);
 
-    // El selector modificado (el de referencia) ya inyectó el resultado en s->origin_resolution
-    // (Verifica que en tu struct socks5 tengas este campo, o agrégalo)
-    
+    // El selector modificado (el de referencia) ya inyectó el resultado en s->origin_resolution - VERIFICAR    
     if (s->origin_resolution == NULL) {
         // El hilo retornó NULL -> Falló el DNS
         d->reply = SOCKS_REPLY_HOST_UNREACHABLE;
-        return ERROR; 
+        // Pasar por REQUEST_WRITE para enviar la respuesta de error
+        return REQUEST_WRITE;
     }
 
-    // Éxito: Guardamos la lista de direcciones y avanzamos a conectar
     d->current_addr = s->origin_resolution;
-    
     // Reactivamos intereses (el estado CONNECTING se encargará de poner OP_WRITE en el origin_fd)
-    return REQUEST_CONNECTING; 
+    return REQUEST_CONNECTING;
 }
 
 /*
@@ -820,40 +811,36 @@ request_connecting(struct selector_key *key) {
     struct request_st *req = &ATTACHMENT(key)->client.request;
     unsigned ret = REQUEST_CONNECTING;
     
+    // Solo intentamos una dirección por vez, y solo avanzamos a la siguiente
+    // si el intento anterior falló de inmediato. Si EINPROGRESS, esperamos evento.
     while (d->current_addr != NULL) {
         if (*d->fd == -1) {
-            *d->fd = socket(d->current_addr->ai_family, 
+            *d->fd = socket(d->current_addr->ai_family,
                            d->current_addr->ai_socktype,
                            d->current_addr->ai_protocol);
-            
             if (*d->fd == -1) {
+                fprintf(stderr, "[CONNECTING] socket() failed: %s\n", strerror(errno));
                 d->current_addr = d->current_addr->ai_next;
                 continue;
             }
-            
             if (selector_fd_set_nio(*d->fd) == -1) {
+                fprintf(stderr, "[CONNECTING] selector_fd_set_nio() failed: %s\n", strerror(errno));
                 close(*d->fd);
                 *d->fd = -1;
                 d->current_addr = d->current_addr->ai_next;
                 continue;
             }
         }
-        
-        int connect_ret = connect(*d->fd, d->current_addr->ai_addr, 
-                                 d->current_addr->ai_addrlen);
-        
+
+        fprintf(stderr, "[CONNECTING] intentando connect() a %p...\n", (void*)d->current_addr->ai_addr);
+        int connect_ret = connect(*d->fd, d->current_addr->ai_addr, d->current_addr->ai_addrlen);
         if (connect_ret == 0 || (connect_ret == -1 && errno == EISCONN)) {
             fprintf(stderr, "[CONNECTING] connected OK\n");
+            struct socks5 *s = ATTACHMENT(key);
             req->reply = SOCKS_REPLY_SUCCEEDED;
             ret = REQUEST_WRITE;
-            
-            // Connection succeeded, change origin interest to NOOP
-            struct socks5 *s = ATTACHMENT(key);
             selector_set_interest(key->s, *d->fd, OP_NOOP);
-            // Set client_fd to write the response
             selector_set_interest(key->s, s->client_fd, OP_WRITE);
-            
-            // Log conexión exitosa
             access_log_connection(
                 s->username[0] != '\0' ? s->username : NULL,
                 (struct sockaddr *)&s->client_addr,
@@ -861,23 +848,32 @@ request_connecting(struct selector_key *key) {
                 s->dest_port,
                 d->current_addr->ai_addr
             );
-            
-            break;
-        } else if (errno == EINPROGRESS || errno == EALREADY) {
-            ret = REQUEST_CONNECTING;
-            break;
+            return ret;
+        } else if (connect_ret == -1 && (errno == EINPROGRESS || errno == EALREADY)) {
+            fprintf(stderr, "[CONNECTING] EINPROGRESS/EALREADY, esperando evento de escritura\n");
+            struct socks5 *s = ATTACHMENT(key);
+            s->references++;
+            selector_register(key->s, *d->fd, &socks5_handler, OP_WRITE, ATTACHMENT(key));
+            // No avanzar a la siguiente dirección hasta que este intento termine
+            return REQUEST_CONNECTING;
         } else {
+            fprintf(stderr, "[CONNECTING] connect() fallo: %s\n", strerror(errno));
             close(*d->fd);
             *d->fd = -1;
             d->current_addr = d->current_addr->ai_next;
+            // break para salir del ciclo y esperar próxima llamada
+            break;
         }
     }
-    
-    if (d->current_addr == NULL && ret == REQUEST_CONNECTING) {
+
+    // Si llegamos aquí y no quedan direcciones, fallaron todas
+    if (d->current_addr == NULL) {
+        fprintf(stderr, "[CONNECTING] todas las direcciones fallaron\n");
         req->reply = SOCKS_REPLY_HOST_UNREACHABLE;
-        ret = ERROR;
+        // Pasar por REQUEST_WRITE para enviar la respuesta de error
+        return REQUEST_WRITE;
     }
-    
+
     return ret;
 }
 
@@ -898,11 +894,11 @@ request_write(struct selector_key *key) {
             return ret;
         }
     }
-    
+
     size_t nbytes;
     uint8_t *ptr = buffer_read_ptr(b, &nbytes);
     ssize_t n = send(key->fd, ptr, nbytes, MSG_NOSIGNAL);
-    
+
     if (n == -1) {
         ret = ERROR;
     } else {
@@ -911,11 +907,12 @@ request_write(struct selector_key *key) {
             if (d->reply == SOCKS_REPLY_SUCCEEDED) {
                 ret = COPY;
             } else {
-                ret = ERROR;
+                // Si fue un error, cerramos la conexión después de enviar la respuesta
+                ret = DONE;
             }
         }
     }
-    
+
     return ret;
 }
 
