@@ -29,22 +29,35 @@ docker build --platform linux/amd64 -t tpe-pdc .
 docker build -t tpe-pdc .
 ```
 
-### 2. Levantar un contenedor temporal e interactivo
+
+### 2. Levantar un contenedor persistente y acceder desde varias terminales
+
+**Paso 1: Iniciar el contenedor en modo persistente (con nombre)**
 
 **En MacBook Pro M1/M2/M3 (Apple Silicon):**
 ```sh
-docker run --platform linux/amd64 --rm -it -v "$PWD":/workspace -w /workspace tpe-pdc /bin/bash
+docker run --platform linux/amd64 -it --name tpe-pdc-dev -v "$PWD":/workspace -w /workspace -p 1080:1080 -p 8080:8080 tpe-pdc /bin/bash
 ```
 
 **En Linux/Mac Intel:**
 ```sh
-docker run --rm -it -v "$PWD":/workspace -w /workspace tpe-pdc /bin/bash
+docker run -it --name tpe-pdc-dev -v "$PWD":/workspace -w /workspace -p 1080:1080 -p 8080:8080 tpe-pdc /bin/bash
 ```
 
 **En Windows PowerShell:**
 ```powershell
-docker run --rm -it -v "${PWD}:/workspace" -w /workspace tpe-pdc /bin/bash
+docker run -it --name tpe-pdc-dev -v "${PWD}:/workspace" -w /workspace -p 1080:1080 -p 8080:8080 tpe-pdc /bin/bash
 ```
+
+**Paso 2: Abrir una nueva terminal en el mismo contenedor**
+
+En una terminal diferente, ejecuta:
+```sh
+docker exec -it tpe-pdc-dev /bin/bash
+```
+
+Ahora puedes correr el server en una terminal y el client en otra, ambos dentro del mismo contenedor.
+
 
 ### 3. Limpiar y compilar dentro del contenedor
 
